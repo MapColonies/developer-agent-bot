@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: toshimaru/auto-author-assign@v3.1.0
         with:
-          # Falls back to the built-in token: GH_PAT is not set on this repo, and the job
-          # already has the pull-requests: write permission it needs.
-          repo-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # `github.token` rather than `secrets.GITHUB_TOKEN`: the secrets-context fallback
+          # added in 908f19a still resolved to an empty input, so the action failed with
+          # 'Input required and not supplied'. The github context is always populated, and
+          # the job already holds the pull-requests: write permission the action needs.
+          repo-token: ${{ github.token }}

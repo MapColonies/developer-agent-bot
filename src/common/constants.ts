@@ -18,6 +18,17 @@ export const LABELS = {
 } as const;
 
 /**
+ * The two statuses the claim/release cycle moves a ticket between.
+ *
+ * Matched against a transition's *target status*, not against transition names — those are
+ * verbs on a real workflow (`Start Progress`).
+ */
+export const STATUS_NAMES = {
+  inProgress: 'In Progress',
+  open: 'Open',
+} as const;
+
+/**
  * Status *names* that mean the ticket is finished.
  *
  * Deliberately not `statusCategory = Done`: verified against the live instance in

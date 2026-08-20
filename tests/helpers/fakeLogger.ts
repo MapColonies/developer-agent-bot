@@ -2,7 +2,7 @@ import type { Logger } from '@map-colonies/js-logger';
 import { vi } from 'vitest';
 
 export interface RecordedLine {
-  level: 'info' | 'error';
+  level: 'info' | 'warn' | 'error';
   payload: Record<string, unknown>;
 }
 
@@ -18,7 +18,7 @@ export function fakeLogger(): { logger: Logger; lines: RecordedLine[] } {
   const logger = {
     info: record('info'),
     error: record('error'),
-    warn: vi.fn(),
+    warn: record('warn'),
     debug: vi.fn(),
     trace: vi.fn(),
     fatal: vi.fn(),

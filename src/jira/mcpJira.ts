@@ -9,6 +9,12 @@ import type { JiraPort, JiraTicket, JiraTransition } from './types';
 const POLL_FIELDS = 'summary,status,labels,assignee,issuetype,created';
 
 /* eslint-disable @typescript-eslint/naming-convention -- these mirror the MCP server's wire format */
+interface McpTransition {
+  id: number | string;
+  name: string;
+  to?: { name?: string } | string;
+}
+
 interface McpTicket {
   key: string;
   summary?: string;
@@ -18,14 +24,14 @@ interface McpTicket {
   assignee?: { display_name?: string } | null;
 }
 
+/* eslint-enable @typescript-eslint/naming-convention */
+
 /**
  * Jira access via the org's self-hosted `atlassian-write` MCP server (MAPCO-11427).
  *
  * The worker holds no Jira credentials — that server already has them. It is reached
  * in-cluster, which is also why the worker needs no inbound Route of its own.
  */
-/* eslint-enable @typescript-eslint/naming-convention */
-
 class McpJira implements JiraPort {
   private client: Client | undefined;
 
@@ -41,12 +47,35 @@ class McpJira implements JiraPort {
     return (parsed.issues ?? []).map(toTicket);
   }
 
+  public async getIssue(issueKey: string): Promise<JiraTicket | null> {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
+    const raw = await this.call('jira_get_issue', { issue_key: issueKey, fields: POLL_FIELDS, comment_limit: 0 });
+    const parsed = JSON.parse(raw) as McpTicket | null;
+
+    return parsed?.key === undefined ? null : toTicket(parsed);
+  }
+
+  public async assign(issueKey: string, assignee: string | null): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
+    await this.call('jira_update_issue', { issue_key: issueKey, fields: assigneeFields(assignee) });
+  }
+
+  public async transition(issueKey: string, transitionId: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
+    await this.call('jira_transition_issue', { issue_key: issueKey, transition_id: transitionId });
+  }
+
+  public async addComment(issueKey: string, body: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
+    await this.call('jira_add_comment', { issue_key: issueKey, body });
+  }
+
   public async getTransitions(issueKey: string): Promise<JiraTransition[]> {
     // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
     const raw = await this.call('jira_get_transitions', { issue_key: issueKey });
-    const parsed = JSON.parse(raw) as { id: number | string; name: string }[];
+    const parsed = JSON.parse(raw) as McpTransition[];
 
-    return parsed.map((transition) => ({ id: String(transition.id), name: transition.name }));
+    return parsed.map(toTransition);
   }
 
   public async close(): Promise<void> {
@@ -106,6 +135,22 @@ function toAssignee(displayName: string | undefined): string | null {
   return displayName;
 }
 
+/**
+ * The `fields` argument of `jira_update_issue`, which takes a JSON *string* rather than an
+ * object. Passing an object updates nothing and still reports success, which would make a
+ * failed claim look like it held — so this is its own named, tested function.
+ */
+function assigneeFields(assignee: string | null): string {
+  return JSON.stringify({ assignee });
+}
+
+/** The server reports a transition's target status as an object, or sometimes not at all. */
+function toTransition(transition: McpTransition): JiraTransition {
+  const to = typeof transition.to === 'string' ? transition.to : transition.to?.name;
+
+  return { id: String(transition.id), name: transition.name, to };
+}
+
 function toTicket(issue: McpTicket): JiraTicket {
   return {
     key: issue.key,
@@ -118,5 +163,5 @@ function toTicket(issue: McpTicket): JiraTicket {
   };
 }
 
-export { McpJira, toTicket };
-export type { McpTicket };
+export { assigneeFields, McpJira, toTicket, toTransition };
+export type { McpTicket, McpTransition };

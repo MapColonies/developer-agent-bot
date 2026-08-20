@@ -4,7 +4,22 @@ import { FakeJira, ticket } from '@tests/helpers/fakeJira';
 import { fakeLogger } from '@tests/helpers/fakeLogger';
 import type { WorkerConfig } from '@src/common/workerConfig';
 
-const config: WorkerConfig = { pollIntervalMs: 1000, maxTicketsPerRun: 1, maxConcurrentTickets: 1, mcpUrl: 'http://mcp.invalid' };
+/** A claimable ticket, so these timing tests exercise a real cycle rather than a refusal. */
+const displayNames = { 'developer-agent@mapcolonies.example': 'AGENT DEVELOPER' };
+const workflow = {
+  'MAPCO-1': [
+    { id: '21', name: 'Start Progress', to: 'In Progress' },
+    { id: '11', name: 'Reopen', to: 'Open' },
+  ],
+};
+
+const config: WorkerConfig = {
+  pollIntervalMs: 1000,
+  maxTicketsPerRun: 1,
+  maxConcurrentTickets: 1,
+  mcpUrl: 'http://mcp.invalid',
+  bot: { account: 'developer-agent@mapcolonies.example', displayName: 'AGENT DEVELOPER' },
+};
 
 describe('createScheduler', () => {
   beforeEach(() => {
@@ -16,7 +31,7 @@ describe('createScheduler', () => {
   });
 
   it('should run a cycle immediately and again after the interval.', async () => {
-    const jira = new FakeJira({ tickets: [ticket()] });
+    const jira = new FakeJira({ tickets: [ticket()], transitions: workflow, displayNames });
     const { logger } = fakeLogger();
     const scheduler = createScheduler({ jira, logger, config }, 1000, logger);
 

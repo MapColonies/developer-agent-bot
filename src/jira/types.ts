@@ -9,7 +9,16 @@ export interface JiraTicket {
 
 export interface JiraTransition {
   readonly id: string;
+  /** The transition's own name — a verb on a real workflow, like `Start Progress`. */
   readonly name: string;
+  /**
+   * The status this transition lands the ticket in, when the server reports one.
+   *
+   * This is what the worker matches on. Asking for "the transition into In Progress" by
+   * *name* only works on a workflow whose transitions happen to be named after their
+   * target status, which is not the common case.
+   */
+  readonly to?: string;
 }
 
 /**
@@ -21,4 +30,20 @@ export interface JiraTransition {
 export interface JiraPort {
   search: (jql: string, limit: number) => Promise<JiraTicket[]>;
   getTransitions: (issueKey: string) => Promise<JiraTransition[]>;
+  /**
+   * Read one issue back. This is the confirmation half of the optimistic claim: Jira is
+   * the only state store, so the only way to know a claim held is to ask again.
+   */
+  getIssue: (issueKey: string) => Promise<JiraTicket | null>;
+  /**
+   * Write the assignee. `null` unassigns.
+   *
+   * Note the asymmetry with what reads return: a write takes an *identifier* (email or
+   * accountId) while a read returns a *display name*, and in this instance display names
+   * are surname-first, so the two cannot be assumed equal. That is why the worker is
+   * configured with both (see `WorkerConfig.botAccount` / `botDisplayName`).
+   */
+  assign: (issueKey: string, assignee: string | null) => Promise<void>;
+  transition: (issueKey: string, transitionId: string) => Promise<void>;
+  addComment: (issueKey: string, body: string) => Promise<void>;
 }
