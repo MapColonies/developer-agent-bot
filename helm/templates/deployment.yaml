@@ -1,19 +1,19 @@
 {{- $releaseName := .Release.Name -}}
-{{- $chartName := include "ts-server-boilerplate.name" . -}}
-{{- $cloudProviderFlavor := include "ts-server-boilerplate.cloudProviderFlavor" . -}}
-{{- $cloudProviderDockerRegistryUrl := include "ts-server-boilerplate.cloudProviderDockerRegistryUrl" . -}}
-{{- $cloudProviderImagePullSecretName := include "ts-server-boilerplate.cloudProviderImagePullSecretName" . -}}
-{{- $imageTag := include "ts-server-boilerplate.tag" . -}}
+{{- $chartName := include "developer-agent-bot.name" . -}}
+{{- $cloudProviderFlavor := include "developer-agent-bot.cloudProviderFlavor" . -}}
+{{- $cloudProviderDockerRegistryUrl := include "developer-agent-bot.cloudProviderDockerRegistryUrl" . -}}
+{{- $cloudProviderImagePullSecretName := include "developer-agent-bot.cloudProviderImagePullSecretName" . -}}
+{{- $imageTag := include "developer-agent-bot.tag" . -}}
 {{- if .Values.enabled -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "ts-server-boilerplate.fullname" . }}
+  name: {{ include "developer-agent-bot.fullname" . }}
   labels:
     app: {{ $chartName }}
     component: {{ $chartName }}
     release: {{ $releaseName }}
-    {{- include "ts-server-boilerplate.labels" . | nindent 4 }}
+    {{- include "developer-agent-bot.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
@@ -21,15 +21,15 @@ spec:
     matchLabels:
       app: {{ $chartName }}
       release: {{ $releaseName }}
-      run: {{ include "ts-server-boilerplate.fullname" . }}
-      {{- include "ts-server-boilerplate.selectorLabels" . | nindent 6 }}
+      run: {{ include "developer-agent-bot.fullname" . }}
+      {{- include "developer-agent-bot.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
         app: {{ $chartName }}
         release: {{ $releaseName }}
-        run: {{ include "ts-server-boilerplate.fullname" . }}
-        {{- include "ts-server-boilerplate.labels" . | nindent 8 }}
+        run: {{ include "developer-agent-bot.fullname" . }}
+        {{- include "developer-agent-bot.labels" . | nindent 8 }}
       annotations:
         {{ include "mclabels.annotations" . | nindent 8 }}
       {{- if .Values.resetOnConfigChange }}
@@ -44,7 +44,7 @@ spec:
         - name: {{ $cloudProviderImagePullSecretName | quote }}
     {{- end }}
       containers:
-        - name: {{ include "ts-server-boilerplate.fullname" . }}
+        - name: {{ include "developer-agent-bot.fullname" . }}
           {{- with .Values.image }}
           image: {{ $cloudProviderDockerRegistryUrl }}{{ .repository }}:{{ $imageTag }}
           imagePullPolicy: {{ .pullPolicy | default "IfNotPresent" }}
@@ -71,8 +71,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.uid
-            - name: SERVER_PORT
-              value: {{ .Values.env.targetPort | quote }}
+            - name: MCP_ATLASSIAN_URL
+              value: {{ .Values.worker.mcpUrl | quote }}
+            - name: POLL_INTERVAL_MS
+              value: {{ .Values.worker.pollIntervalMs | quote }}
+            - name: MAX_TICKETS_PER_RUN
+              value: {{ .Values.worker.maxTicketsPerRun | quote }}
+            - name: MAX_CONCURRENT_TICKETS
+              value: {{ .Values.worker.maxConcurrentTickets | quote }}
             {{- if .Values.caSecretName }}
             - name: REQUESTS_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.caPath .Values.caKey | quote }}
@@ -84,29 +90,7 @@ spec:
             {{- end }}            
           envFrom:
             - configMapRef:
-                name: {{ include "ts-server-boilerplate.fullname" . }}
-          ports:
-            - name: http
-              containerPort: {{ .Values.env.targetPort }}
-              protocol: {{ .Values.env.protocol }}
-          {{- if .Values.livenessProbe.enabled }}
-          livenessProbe:
-            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
-            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
-            httpGet:
-              path: {{ .Values.livenessProbe.path }}
-              port: {{ .Values.env.targetPort }}
-          {{- end }}
-          {{- if .Values.readinessProbe.enabled }}
-          readinessProbe:
-            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
-            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
-            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
-            httpGet:
-              path: {{ .Values.readinessProbe.path }}
-              port: {{ .Values.env.targetPort }}
-          {{- end }}        
+                name: {{ include "developer-agent-bot.fullname" . }}
           {{- if .Values.resources.enabled }}
           resources:
             {{- toYaml .Values.resources.value | nindent 12 }}
@@ -115,9 +99,6 @@ spec:
         {{ tpl (toYaml .Values.sidecars) . | nindent 8 }}
         {{- end }}
       volumes:
-        - name: nginx-config
-          configMap:
-            name: 'nginx-extra-configmap'      
         {{- if .Values.caSecretName }}
         - name: root-ca
           secret:

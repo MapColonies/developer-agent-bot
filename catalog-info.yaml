@@ -1,17 +1,17 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: ts-server-boilerplate
-  description: A boilerplate github repo for a REST API service in NodeJS for MapColonies
+  name: developer-agent-bot
+  description: Pulls agent-ready Jira tickets, implements them, and opens pull requests
   annotations:
-    github.com/project-slug: MapColonies/ts-server-boilerplate
+    github.com/project-slug: MapColonies/developer-agent-bot
   tags:
     - nodejs
     - typescript
-    - expressjs
-    - boilerplate
+    - agent
+    - worker
 spec:
   type: service
   lifecycle: production
   owner: DevInfra
-  system: boilerplate
+  system: agent-delegation
