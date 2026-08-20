@@ -13,4 +13,6 @@ jobs:
     steps:
       - uses: toshimaru/auto-author-assign@v3.1.0
         with:
-          repo-token: ${{ secrets.GH_PAT }}
+          # Falls back to the built-in token: GH_PAT is not set on this repo, and the job
+          # already has the pull-requests: write permission it needs.
+          repo-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
