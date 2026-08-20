@@ -1,0 +1,60 @@
+/**
+ * Worker knobs.
+ *
+ * Deliberately env-based rather than `@map-colonies/config`. That library resolves a
+ * schema published in `@map-colonies/schemas`, and no schema exists for this service yet;
+ * the telemetry half still goes through it (see `common/config.ts`) because
+ * `commonBoilerplateV3` already covers logger and tracing. Registering a real schema for
+ * these knobs is follow-up work, not a blocker for the read-only slice.
+ */
+
+interface WorkerConfig {
+  /** How often the internal scheduler runs a cycle. */
+  readonly pollIntervalMs: number;
+  /** How many tickets one cycle may start. Defaults to 1 per MAPCO-11429. */
+  readonly maxTicketsPerRun: number;
+  /** How many tickets may be in flight at once. Defaults to 1 per MAPCO-11429. */
+  readonly maxConcurrentTickets: number;
+  /** Base URL of the in-cluster `atlassian-write` MCP server. */
+  readonly mcpUrl: string;
+}
+
+const DEFAULT_POLL_INTERVAL_MS = 300_000;
+
+class ConfigError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
+function readInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new ConfigError(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+
+  return parsed;
+}
+
+function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
+  const mcpUrl = env.MCP_ATLASSIAN_URL;
+  if (mcpUrl === undefined || mcpUrl === '') {
+    throw new ConfigError('MCP_ATLASSIAN_URL must be set — the worker has no Jira credentials of its own');
+  }
+
+  return {
+    pollIntervalMs: readInt(env, 'POLL_INTERVAL_MS', DEFAULT_POLL_INTERVAL_MS),
+    maxTicketsPerRun: readInt(env, 'MAX_TICKETS_PER_RUN', 1),
+    maxConcurrentTickets: readInt(env, 'MAX_CONCURRENT_TICKETS', 1),
+    mcpUrl,
+  };
+}
+
+export { ConfigError, loadWorkerConfig };
+export type { WorkerConfig };

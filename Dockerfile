@@ -15,7 +15,6 @@ FROM node:24.10.0-alpine3.22 AS production
 RUN apk add dumb-init
 
 ENV NODE_ENV=production
-ENV SERVER_PORT=8080
 
 
 WORKDIR /usr/src/app
@@ -29,6 +28,6 @@ COPY --chown=node:node --from=build /tmp/buildApp/dist .
 COPY --chown=node:node ./config ./config
 
 
+# Outbound-only worker: nothing to expose.
 USER node
-EXPOSE 8080
 CMD ["dumb-init", "node", "--import", "./instrumentation.mjs", "./index.js"]

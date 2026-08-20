@@ -1,10 +1,4 @@
 {
-  "openapiConfig": {
-    "filePath": "./openapi3.yaml",
-    "basePath": "/docs",
-    "rawPath": "/api",
-    "uiPath": "/api"
-  },
   "telemetry": {
     "metrics": {},
     "tracing": {
@@ -16,20 +10,6 @@
       "prettyPrint": false,
       "opentelemetryOptions": {
         "enabled": false
-      }
-    }
-  },
-  "server": {
-    "port": 8080,
-    "request": {
-      "payload": {
-        "limit": "1mb"
-      }
-    },
-    "response": {
-      "compression": {
-        "enabled": true,
-        "options": null
       }
     }
   }

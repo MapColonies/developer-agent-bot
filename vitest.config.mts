@@ -13,13 +13,19 @@ const pathAlias = Object.fromEntries(
   ])
 );
 
+const reporters: Exclude<ViteUserConfig['test'], undefined>['reporters'] = ['default', 'html'];
+
+if (process.env.GITHUB_ACTIONS) {
+  reporters.push('github-actions');
+}
+
 export default defineConfig({
   test: {
     projects: [
       {
         test: {
           name: 'unit',
-          setupFiles: ['./tests/configurations/initJestOpenapi.setup.ts', './tests/configurations/vite.setup.ts'],
+          setupFiles: ['./tests/configurations/vite.setup.ts'],
           include: ['tests/unit/**/*.spec.ts'],
           environment: 'node',
         },
@@ -30,7 +36,7 @@ export default defineConfig({
       {
         test: {
           name: 'integration',
-          setupFiles: ['./tests/configurations/initJestOpenapi.setup.ts', './tests/configurations/vite.setup.ts'],
+          setupFiles: ['./tests/configurations/vite.setup.ts'],
           include: ['tests/integration/**/*.spec.ts'],
           environment: 'node',
         },
@@ -39,6 +45,7 @@ export default defineConfig({
         },
       },
     ],
+    reporters,
     coverage: {
       enabled: true,
       reporter: ['text', 'html', 'json', 'json-summary'],

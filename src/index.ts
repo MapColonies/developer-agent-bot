@@ -1,26 +1,42 @@
 // this import must be called before the first import of tsyringe
 import 'reflect-metadata';
-import { createServer } from 'node:http';
-import { createTerminus } from '@godaddy/terminus';
 import type { Logger } from '@map-colonies/js-logger';
 import { SERVICES } from '@common/constants';
-import type { ConfigType } from '@common/config';
-import { getApp } from './app';
+import { loadWorkerConfig } from '@common/workerConfig';
+import { getTracing } from '@common/tracing';
+import { registerExternalValues } from './containerConfig';
+import { McpJira } from './jira/mcpJira';
+import { createScheduler } from './scheduler';
 
-void getApp()
-  .then(([app, container]) => {
-    const logger = container.resolve<Logger>(SERVICES.LOGGER);
-    const config = container.resolve<ConfigType>(SERVICES.CONFIG);
-    const port = config.get('server.port');
-    const stubHealthCheck = async (): Promise<void> => Promise.resolve();
-    const server = createTerminus(createServer(app), { healthChecks: { '/liveness': stubHealthCheck }, onSignal: container.resolve('onSignal') });
+async function main(): Promise<void> {
+  const container = await registerExternalValues();
+  const logger = container.resolve<Logger>(SERVICES.LOGGER);
+  const config = loadWorkerConfig();
 
-    server.listen(port, () => {
-      logger.info(`app started on port ${port}`);
-    });
-  })
-  .catch((error: Error) => {
-    console.error('😢 - failed initializing the server');
-    console.error(error);
-    process.exit(1);
+  const jira = new McpJira(config.mcpUrl);
+  const scheduler = createScheduler({ jira, logger, config }, config.pollIntervalMs, logger);
+
+  const shutdown = (signal: string): void => {
+    logger.info({ msg: 'shutting down', signal });
+    void scheduler
+      .stop()
+      .then(async () => Promise.all([jira.close(), getTracing().stop()]))
+      .then(() => process.exit(0))
+      .catch(() => process.exit(1));
+  };
+
+  process.on('SIGTERM', () => {
+    shutdown('SIGTERM');
   });
+  process.on('SIGINT', () => {
+    shutdown('SIGINT');
+  });
+
+  scheduler.start();
+}
+
+void main().catch((error: Error) => {
+  console.error('😢 - failed initializing the worker');
+  console.error(error);
+  process.exit(1);
+});

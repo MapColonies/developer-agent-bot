@@ -1,13 +1,11 @@
-{{- $tracingUrl := include "ts-server-boilerplate.tracingUrl" . -}}
-{{- $metricsUrl := include "ts-server-boilerplate.metricsUrl" . -}}
+{{- $tracingUrl := include "developer-agent-bot.tracingUrl" . -}}
+{{- $metricsUrl := include "developer-agent-bot.metricsUrl" . -}}
 {{- if .Values.enabled -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "ts-server-boilerplate.fullname" . }}
+  name: {{ include "developer-agent-bot.fullname" . }}
 data:
-  REQUEST_PAYLOAD_LIMIT: {{ .Values.env.requestPayloadLimit | quote }}
-  RESPONSE_COMPRESSION_ENABLED: {{ .Values.env.responseCompressionEnabled | quote }}
   LOG_LEVEL: {{ .Values.env.logLevel | quote }}
   LOG_PRETTY_PRINT_ENABLED: {{ .Values.env.logPrettyPrintEnabled | quote }}
   {{ if .Values.env.tracing.enabled }}
