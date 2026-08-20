@@ -59,6 +59,12 @@ worker:
   # In-cluster address of the self-hosted atlassian-write MCP server. The worker holds no
   # Jira credentials of its own — that server already has them.
   mcpUrl: 'http://mcp-atlassian:8080/mcp'
+  # Who the worker claims tickets as. Two values because Jira takes an identifier on write
+  # and returns a display name on read, and display names here are surname-first — the
+  # optimistic claim's re-read compares against botDisplayName, so a mismatch between
+  # these two makes every claim look lost.
+  botAccount: ''
+  botDisplayName: ''
   pollIntervalMs: 300000
   maxTicketsPerRun: 1
   maxConcurrentTickets: 1

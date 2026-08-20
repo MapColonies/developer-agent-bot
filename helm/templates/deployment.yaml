@@ -73,6 +73,10 @@ spec:
                   fieldPath: metadata.uid
             - name: MCP_ATLASSIAN_URL
               value: {{ .Values.worker.mcpUrl | quote }}
+            - name: JIRA_BOT_ACCOUNT
+              value: {{ .Values.worker.botAccount | quote }}
+            - name: JIRA_BOT_DISPLAY_NAME
+              value: {{ .Values.worker.botDisplayName | quote }}
             - name: POLL_INTERVAL_MS
               value: {{ .Values.worker.pollIntervalMs | quote }}
             - name: MAX_TICKETS_PER_RUN

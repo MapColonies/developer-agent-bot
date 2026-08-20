@@ -6,7 +6,8 @@
  * It exercises the same `runCycle` seam the deployed worker runs, so what it proves is
  * about the worker and not about the harness.
  *
- * Read-only, like the slice it belongs to.
+ * Not read-only: this walks the same claim-and-release path the deployed worker walks, so
+ * it comments on, assigns and transitions a real ticket (MAPCO-11431).
  */
 import 'reflect-metadata';
 import { jsLogger } from '@map-colonies/js-logger';

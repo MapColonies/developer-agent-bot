@@ -4,8 +4,9 @@ Pulls `agent-ready` Jira tickets from the MAPCO project, implements them, and op
 requests. Designed in [MAPCO-11374](https://mapcolonies.atlassian.net/browse/MAPCO-11374),
 substrate decided in [MAPCO-11377](https://mapcolonies.atlassian.net/browse/MAPCO-11377).
 
-**Current slice: MAPCO-11429.** It polls and reports. It claims nothing, writes nothing to
-Jira, and touches no repository.
+**Current slice: MAPCO-11431.** It walks the whole Jira state machine with nothing in the
+middle — it claims a ticket and hands it straight back with a comment. It touches no
+repository and writes no code yet.
 
 ## Shape
 
@@ -71,6 +72,8 @@ so refusal is the common path until the convention spreads.
 | Variable | Default | Meaning |
 |---|---|---|
 | `MCP_ATLASSIAN_URL` | *required* | Address of the `atlassian-write` MCP server. Transport is picked from the path: `/sse` gets SSE, anything else Streamable HTTP |
+| `JIRA_BOT_ACCOUNT` | *required* | Identifier written to a ticket's assignee field — an email or accountId |
+| `JIRA_BOT_DISPLAY_NAME` | *required* | What `JIRA_BOT_ACCOUNT` reads back as, surname-first. The claim re-read compares against this |
 | `POLL_INTERVAL_MS` | `300000` | How often a cycle runs |
 | `MAX_TICKETS_PER_RUN` | `1` | Tickets one cycle may start |
 | `MAX_CONCURRENT_TICKETS` | `1` | Tickets in flight at once |
@@ -78,24 +81,64 @@ so refusal is the common path until the convention spreads.
 
 Raise `MAX_TICKETS_PER_RUN` before ever raising `MAX_CONCURRENT_TICKETS`.
 
+The two bot-identity variables look redundant and are not: Jira takes an *identifier* on
+write and hands back a *display name* on read, and neither is derivable from the other in
+this instance. Set them inconsistently and every claim reads as lost.
+
+## Claiming and releasing
+
+Jira is the only state store — no database, no files that outlive a run — so there is no
+lock to take. Claiming is **optimistic**:
+
+1. Look up the transition into `In Progress` *before* writing anything. A workflow with no
+   route in means the ticket can never be worked, and that is a refusal, not a half-claim.
+   The lookup matches a transition's **target status**, not its name — transition names are
+   verbs (`Start Progress`), so matching by name alone would refuse every ticket.
+2. Write the assignee, then **read the issue back**. If the assignee is not the bot, a human
+   got there first: back off, write nothing further, and do not try to take it back off
+   them. Our write is already overwritten and is not ours to undo.
+3. Transition to `In Progress`.
+
+Releasing runs in the order comment → transition to `Open` → **unassign last**. That order
+is deliberate and is the reverse of how it reads. Unassigning is what makes a ticket visible
+to the poll query again (it filters `assignee is EMPTY`), so it goes last: if anything fails
+part-way, the ticket is left held by the bot and `In Progress`, which the query skips and the
+boot-time orphan sweep (MAPCO-11432) recovers. Unassigning first risks leaving a ticket
+unassigned and `In Progress` — which polls straight back in, forever.
+
 ## Known gaps
 
 - The worker knobs are read from the environment rather than `@map-colonies/config`, which
   needs a schema published in `@map-colonies/schemas`. Telemetry still goes through the
   library. Registering a real schema is follow-up work.
-- **The Jira identity is the shared MCP service account.** It has no per-user attribution,
-  so the optimistic claim check (MAPCO-11431) cannot distinguish this worker from any other
-  session using the same MCP, and boot-time orphan release (MAPCO-11432) could release a
-  ticket someone else is working. A dedicated Jira account is the recommendation.
+- **The Jira identity is configured, not discovered.** The MCP server runs under a shared
+  service account with no per-user attribution, so the worker cannot ask Jira who it is —
+  hence `JIRA_BOT_ACCOUNT` / `JIRA_BOT_DISPLAY_NAME`. The claim re-read can therefore tell
+  the bot apart from a *human*, but not from a second worker configured with the same
+  account. A dedicated Jira account per deployment is still the recommendation, and it is
+  what makes boot-time orphan release (MAPCO-11432) safe.
+- **The real transition vocabulary is unverified.** `jira_get_transitions` and
+  `expand=transitions` are both rejected by the write-pilot MCP server, so the MAPCO
+  workflow's actual transition names and target statuses could not be read the way the poll
+  query was verified in MAPCO-11427. The lookup matches on target status with the
+  transition name as a fallback, which covers both shapes, and a `no-transition` refusal
+  logs the `offered` names — so the first real run reports the vocabulary rather than
+  refusing in silence. Confirm it from that log line before trusting a deployment.
 - `helm lint` needs the private `mclabels` dependency and fails without registry access.
 
 ## Dry run
 
-One cycle against the real MCP server, from a laptop. Read-only. Requires the corporate
-VPN — the server is not reachable from outside it.
+One cycle against the real MCP server, from a laptop. Requires the corporate VPN — the
+server is not reachable from outside it.
+
+**This writes to real tickets.** It claims the oldest `agent-ready` ticket and hands it
+straight back, leaving a comment behind. That is the point: label a ticket `agent-ready` and
+watch it get claimed and returned.
 
 ```sh
 MCP_ATLASSIAN_URL="https://atlassian-mcp-write.mapcolonies.net/sse" \
+  JIRA_BOT_ACCOUNT="developer-agent@mapcolonies.net" \
+  JIRA_BOT_DISPLAY_NAME="AGENT DEVELOPER" \
   GITHUB_TOKEN="$(gh auth token)" npm run dry-run
 ```
 
