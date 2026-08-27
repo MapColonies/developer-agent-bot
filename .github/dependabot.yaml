@@ -8,6 +8,12 @@ updates:
       interval: weekly
     allow:
       - dependency-type: production
+    ignore:
+      # express 5 needs @map-colonies/openapi-express-types to publish an
+      # express-5 peer range first; until then npm ci fails with ERESOLVE.
+      - dependency-name: 'express'
+        update-types:
+          - version-update:semver-major
     directory: /
     commit-message:
       prefix: 'deps'
@@ -27,6 +33,16 @@ updates:
       interval: weekly
     allow:
       - dependency-type: development
+    ignore:
+      # Paired with the express major above.
+      - dependency-name: '@types/express'
+        update-types:
+          - version-update:semver-major
+      # TypeScript 7 is the Go rewrite; the shared MapColonies configs and
+      # openapi-typescript (peer typescript@^5.x) have to move first.
+      - dependency-name: 'typescript'
+        update-types:
+          - version-update:semver-major
     directory: /
     commit-message:
       prefix: 'devdeps'
