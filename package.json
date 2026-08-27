@@ -30,6 +30,7 @@
   "author": "MapColonies",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.237",
     "@map-colonies/config": "^4.0.1",
     "@map-colonies/js-logger": "^5.0.0",
     "@map-colonies/prometheus": "^1.0.0",
