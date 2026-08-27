@@ -12,7 +12,7 @@ const request: AgentRunRequest = {
 
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
 const settings: AgentSettings = {
-  apiKey: 'sk-from-the-secret',
+  credential: { mode: 'api-key', source: 'ANTHROPIC_API_KEY', value: 'sk-from-the-secret' },
   env: {
     PATH: '/usr/bin',
     HOME: '/home/node',
@@ -118,7 +118,21 @@ describe('buildAgentOptions', () => {
     expect(buildAgentOptions(request, settings).env['ANTHROPIC_API_KEY']).toBe('sk-from-the-secret');
   });
 
-  it('should not pass the interactive-login credential to the model, so the run cannot authenticate as a person.', () => {
+  it('should inject the subscription token, and only it, when that is the configured mode.', () => {
+    // The two modes read different variables, so injecting the wrong one fails silently — the
+    // SDK simply finds no credential where it looked.
+    const { env } = buildAgentOptions(request, {
+      ...settings,
+      credential: { mode: 'subscription', source: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'oauth-of-a-person' },
+    });
+
+    expect(env['CLAUDE_CODE_OAUTH_TOKEN']).toBe('oauth-of-a-person');
+    expect(env['ANTHROPIC_API_KEY']).toBeUndefined();
+  });
+
+  it('should not pass a login credential to the model when it is authenticating as the worker.', () => {
+    // In api-key mode an ambient login token is scrubbed and never reaches the model, so a run
+    // cannot end up authenticated as whoever last logged in on this machine.
     expect(buildAgentOptions(request, settings).env['CLAUDE_CODE_OAUTH_TOKEN']).toBeUndefined();
   });
 

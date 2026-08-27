@@ -78,12 +78,40 @@ so refusal is the common path until the convention spreads.
 | `MAX_TICKETS_PER_RUN` | `1` | Tickets one cycle may start |
 | `MAX_CONCURRENT_TICKETS` | `1` | Tickets in flight at once |
 | `GITHUB_TOKEN` | *optional* | Bearer token for repo lookups. A PAT locally; a short-lived App installation token in the cluster once MAPCO-11428 lands. Unauthenticated works at a lower rate limit |
+| `MODEL_AUTH` | `api-key` | Which account model calls are billed to: `api-key` or `subscription`. An unrecognised value refuses to start rather than falling back |
+| `ANTHROPIC_API_KEY` | required for `api-key` | Anthropic API key, from a Secret. Billed to that Anthropic account |
+| `CLAUDE_CODE_OAUTH_TOKEN` | required for `subscription` | A Claude subscription token from `claude setup-token`. Billed to, and rate-limited as, that person — see the warning below |
 
 Raise `MAX_TICKETS_PER_RUN` before ever raising `MAX_CONCURRENT_TICKETS`.
 
 The two bot-identity variables look redundant and are not: Jira takes an *identifier* on
 write and hands back a *display name* on read, and neither is derivable from the other in
 this instance. Set them inconsistently and every claim reads as lost.
+
+### Which account pays for the model
+
+`MODEL_AUTH` is explicit, and deliberately not inferred from whichever credential happens to
+be present. Both credentials look alike to the SDK and bill completely differently, so letting
+the environment decide would make the billed party a property of the pod rather than of a
+decision — and the failure is silent, because a run that quietly spends someone's personal
+quota looks exactly like a working one. One mode's credential is never used for the other; the
+worker refuses to start and names the one it found.
+
+> **⚠️ `subscription` needs Anthropic's approval.** Anthropic's Agent SDK documentation states
+> that, unless previously approved, claude.ai login and its rate limits may not be used for
+> products built on the Agent SDK. Setting `MODEL_AUTH=subscription` asserts that this
+> deployment has that approval — the code cannot check it.
+
+Three consequences of `subscription` mode that no code can fix:
+
+- **Shared quota.** Rate limits belong to the account, so the worker and that person's own
+  interactive Claude Code use starve each other.
+- **Attribution.** Runs are that person's, not the worker's — the same problem this README
+  already records for the shared Jira service account, now for the model too.
+- **Expiry.** Subscription tokens lapse, and when one does the pod crash-loops rather than
+  running on unclear credentials. That is the intended failure, not a bug.
+
+`api-key` mode has none of these, and is the default for that reason.
 
 ## Claiming and releasing
 

@@ -10,7 +10,10 @@ const request: AgentRunRequest = {
 };
 
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
-const settings: AgentSettings = { apiKey: 'sk-from-the-secret', env: { PATH: '/usr/bin', GITHUB_TOKEN: 'ghp_pushable' } };
+const settings: AgentSettings = {
+  credential: { mode: 'api-key', source: 'ANTHROPIC_API_KEY', value: 'sk-from-the-secret' },
+  env: { PATH: '/usr/bin', GITHUB_TOKEN: 'ghp_pushable' },
+};
 /* eslint-enable @typescript-eslint/naming-convention */
 
 interface Call {
@@ -108,6 +111,8 @@ describe('SdkAgent', () => {
   });
 
   it('should refuse to be built without a key rather than failing on the first ticket.', () => {
-    expect(() => new SdkAgent({ apiKey: '  ' }, fakeQuery([]))).toThrow(/API key/u);
+    expect(() => new SdkAgent({ credential: { mode: 'api-key', source: 'ANTHROPIC_API_KEY', value: '  ' } }, fakeQuery([]))).toThrow(
+      /ANTHROPIC_API_KEY/u
+    );
   });
 });
