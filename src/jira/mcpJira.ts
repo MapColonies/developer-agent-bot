@@ -70,6 +70,11 @@ class McpJira implements JiraPort {
     await this.call('jira_add_comment', { issue_key: issueKey, body });
   }
 
+  public async setLabels(issueKey: string, labels: readonly string[]): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
+    await this.call('jira_update_issue', { issue_key: issueKey, fields: labelsFields(labels) });
+  }
+
   public async getTransitions(issueKey: string): Promise<JiraTransition[]> {
     // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
     const raw = await this.call('jira_get_transitions', { issue_key: issueKey });
@@ -144,6 +149,18 @@ function assigneeFields(assignee: string | null): string {
   return JSON.stringify({ assignee });
 }
 
+/**
+ * The `fields` argument for a label write. A JSON *string*, for the same reason as
+ * `assigneeFields` — an object updates nothing and still reports success.
+ *
+ * `jira_update_issue` overwrites the fields it is given, so this sends the complete set. The
+ * array is copied rather than passed through: `JSON.stringify` on a `readonly string[]` is
+ * fine, but the copy keeps the wire payload a plain array whatever the caller held.
+ */
+function labelsFields(labels: readonly string[]): string {
+  return JSON.stringify({ labels: [...labels] });
+}
+
 /** The server reports a transition's target status as an object, or sometimes not at all. */
 function toTransition(transition: McpTransition): JiraTransition {
   const to = typeof transition.to === 'string' ? transition.to : transition.to?.name;
@@ -163,5 +180,5 @@ function toTicket(issue: McpTicket): JiraTicket {
   };
 }
 
-export { assigneeFields, McpJira, toTicket, toTransition };
+export { assigneeFields, labelsFields, McpJira, toTicket, toTransition };
 export type { McpTicket, McpTransition };

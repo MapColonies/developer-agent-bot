@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- these mirror the MCP server's wire format */
 import { describe, expect, it } from 'vitest';
-import { assigneeFields, toTicket, toTransition } from '@src/jira/mcpJira';
+import { assigneeFields, labelsFields, toTicket, toTransition } from '@src/jira/mcpJira';
 
 describe('toTicket', () => {
   it('should read an unassigned ticket as unclaimed, not as assigned to someone called Unassigned.', () => {
@@ -54,6 +54,18 @@ describe('assigneeFields', () => {
 
   it('should send an explicit null to unassign, not an omitted field.', () => {
     expect(assigneeFields(null)).toBe('{"assignee":null}');
+  });
+});
+
+describe('labelsFields', () => {
+  it('should send the labels as a JSON string, because that is what the tool takes.', () => {
+    expect(labelsFields(['agent-ready', 'agent-attempted-1'])).toBe('{"labels":["agent-ready","agent-attempted-1"]}');
+  });
+
+  it('should send the complete set, because the update overwrites rather than adds.', () => {
+    // The attempt counter is the reason this matters: a write that dropped `agent-ready` would
+    // un-enrol the ticket, and enrolment is a human's decision.
+    expect(labelsFields([])).toBe('{"labels":[]}');
   });
 });
 

@@ -46,4 +46,17 @@ export interface JiraPort {
   assign: (issueKey: string, assignee: string | null) => Promise<void>;
   transition: (issueKey: string, transitionId: string) => Promise<void>;
   addComment: (issueKey: string, body: string) => Promise<void>;
+  /**
+   * Replace a ticket's labels with exactly this set.
+   *
+   * A whole-set write rather than an add/remove pair because that is what the underlying tool
+   * offers, and the caller has to have read the existing labels anyway to compute the next
+   * counter. The consequence is worth stating: anything absent from `labels` is *removed*, so a
+   * caller must pass the labels it wants kept, `agent-ready` included. `countAttempt`
+   * (src/budget/attempt.ts) is the function that computes the set; do not derive it by hand.
+   *
+   * This is what carries the attempt counter, and the counter is the only thing that stops a
+   * ticket the worker cannot finish from being picked up and paid for again on every tick.
+   */
+  setLabels: (issueKey: string, labels: readonly string[]) => Promise<void>;
 }

@@ -4,7 +4,8 @@ import type { JiraPort, JiraTicket, JiraTransition } from '@src/jira/types';
 export type FakeWrite =
   | { kind: 'assign'; key: string; assignee: string | null }
   | { kind: 'transition'; key: string; transitionId: string }
-  | { kind: 'comment'; key: string; body: string };
+  | { kind: 'comment'; key: string; body: string }
+  | { kind: 'labels'; key: string; labels: readonly string[] };
 
 export interface FakeJiraOptions {
   tickets?: JiraTicket[];
@@ -17,6 +18,8 @@ export interface FakeJiraOptions {
   displayNames?: Record<string, string>;
   /** Makes the transition lookup fail, standing in for any mid-ticket Jira outage. */
   transitionsFailWith?: Error;
+  /** Makes the label write fail — the one failure that must stop a hand-back. */
+  setLabelsFailWith?: Error;
   /**
    * Simulates a human winning the race, applied the moment after the worker writes the
    * assignee — which is exactly the window the optimistic claim's re-read exists to catch.
@@ -78,6 +81,24 @@ export class FakeJira implements JiraPort {
     // Deliberately does not move the ticket's status. Modelling that would invent a rule
     // Jira does not promise, and tests asserting on it would be checking this fake rather
     // than the worker — the recorded writes already say which transition was asked for.
+    return Promise.resolve();
+  }
+
+  public async setLabels(issueKey: string, labels: readonly string[]): Promise<void> {
+    if (this.options.setLabelsFailWith) {
+      throw this.options.setLabelsFailWith;
+    }
+
+    this.writes.push({ kind: 'labels', key: issueKey, labels });
+
+    // Visible to the next read, like the assignee write: a hand-back reads the labels back to
+    // check the counter landed, and a fake that dropped the write would make that untestable.
+    const current = this.state.get(issueKey);
+
+    if (current) {
+      this.state.set(issueKey, { ...current, labels: [...labels] });
+    }
+
     return Promise.resolve();
   }
 
