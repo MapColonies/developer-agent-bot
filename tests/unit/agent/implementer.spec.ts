@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AgentConfigError } from '@src/agent/apiKey';
+import { AgentConfigError } from '@src/agent/credential';
 import { DEFAULT_AGENT_LIMITS } from '@src/agent/implement';
 import { createImplementer, type ImplementerOptions } from '@src/agent/implementer';
 import type { DescriptionPort, ReleasePort } from '@src/agent/types';
@@ -33,8 +33,18 @@ describe('createImplementer', () => {
     expect(() => createImplementer(options({}))).toThrow(AgentConfigError);
   });
 
-  it('should refuse an interactive login rather than authenticating as a person.', () => {
-    expect(() => createImplementer(options(WITH_LOGIN))).toThrow(/never as whoever logged in/u);
+  it('should refuse a login token that the configured mode did not ask for.', () => {
+    // A login token present with no `MODEL_AUTH` is the operator mistake worth catching: the
+    // deployment meant to bill a subscription and forgot to say so, and using it anyway would
+    // bill a person silently.
+    expect(() => createImplementer(options(WITH_LOGIN))).toThrow(/one mode's credential is never used for the other/u);
+  });
+
+  it('should build on a subscription token when that mode is configured.', () => {
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable names */
+    const env = { ...WITH_LOGIN, MODEL_AUTH: 'subscription' };
+
+    expect(() => createImplementer(options(env))).not.toThrow();
   });
 
   it('should come up with the conservative bounds when none were configured.', () => {

@@ -83,6 +83,21 @@ spec:
               value: {{ .Values.worker.maxTicketsPerRun | quote }}
             - name: MAX_CONCURRENT_TICKETS
               value: {{ .Values.worker.maxConcurrentTickets | quote }}
+            - name: MODEL_AUTH
+              value: {{ .Values.worker.modelAuth | quote }}
+            {{- if eq .Values.worker.modelAuth "subscription" }}
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.modelSecretName | quote }}
+                  key: oauthToken
+            {{- else }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.modelSecretName | quote }}
+                  key: apiKey
+            {{- end }}
             {{- if .Values.caSecretName }}
             - name: REQUESTS_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.caPath .Values.caKey | quote }}
