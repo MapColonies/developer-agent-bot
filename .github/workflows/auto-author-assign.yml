@@ -13,4 +13,14 @@ jobs:
     steps:
       - uses: toshimaru/auto-author-assign@v3.1.0
         with:
-          repo-token: ${{ secrets.GH_PAT }}
+          # `GH_PAT` is not configured on this repo, so this input resolved to an empty string
+          # and the action failed with 'Input required and not supplied: repo-token' on every
+          # pull request. `github.token` is always populated, and the job already holds the
+          # `pull-requests: write` permission the action needs.
+          #
+          # This has to be fixed *on master*. Two earlier attempts (908f19a, a88de87) changed
+          # this file on a feature branch and had no effect: `pull_request_target` did not use
+          # the base branch's copy of the workflow — PRs whose base already carried a working
+          # token still failed with the empty-input error — so the definition that runs is the
+          # one on the default branch. Changing it anywhere else is invisible.
+          repo-token: ${{ secrets.GH_PAT || github.token }}

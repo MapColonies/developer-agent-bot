@@ -15,7 +15,13 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v5
         with:
-          # this assumes that you have created a personal access token
-          # (PAT) and configured it as a GitHub action secret named
-          # `MY_RELEASE_PLEASE_TOKEN` (this secret name is not important).
-          token: ${{ secrets.GH_PAT }}
+          # `GH_PAT` is not configured on this repo, so this resolved to an empty string and
+          # every push to master failed with 'release-please failed: Input required and not
+          # supplied: token'. `github.token` is always populated and the job is granted the
+          # `contents: write` and `pull-requests: write` it needs.
+          #
+          # Known limitation of the built-in token, and the reason a PAT is the usual advice:
+          # events created with `GITHUB_TOKEN` do not trigger workflows, so the release PR
+          # release-please opens will not run the `pull_request` checks. The release itself is
+          # unaffected. Set `GH_PAT` on the repo or org and it takes precedence automatically.
+          token: ${{ secrets.GH_PAT || github.token }}
