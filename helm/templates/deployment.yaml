@@ -50,10 +50,10 @@ spec:
           imagePullPolicy: {{ .pullPolicy | default "IfNotPresent" }}
           {{- end }}
           {{- if .Values.command }}
-          command: 
+          command:
           {{- toYaml .Values.command | nindent 12 }}
           {{- if .Values.args }}
-          args: 
+          args:
           {{- toYaml .Values.args | nindent 12 }}
           {{- end }}
           {{- end }}
@@ -83,6 +83,21 @@ spec:
               value: {{ .Values.worker.maxTicketsPerRun | quote }}
             - name: MAX_CONCURRENT_TICKETS
               value: {{ .Values.worker.maxConcurrentTickets | quote }}
+            - name: MODEL_AUTH
+              value: {{ .Values.worker.modelAuth | quote }}
+            {{- if eq .Values.worker.modelAuth "sdk" }}
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.modelSecretName | quote }}
+                  key: oauthToken
+            {{- else }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.modelSecretName | quote }}
+                  key: apiKey
+            {{- end }}
             {{- if .Values.caSecretName }}
             - name: REQUESTS_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.caPath .Values.caKey | quote }}
@@ -91,7 +106,7 @@ spec:
             {{- end }}
             {{- if .Values.extraEnvVars }}
             {{- toYaml .Values.extraEnvVars | nindent 12 }}
-            {{- end }}            
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "developer-agent-bot.fullname" . }}
@@ -110,5 +125,5 @@ spec:
         {{- end }}
         {{- if .Values.extraVolumes -}}
           {{ tpl (toYaml .Values.extraVolumes) . | nindent 8 }}
-        {{- end }}    
+        {{- end }}
 {{- end -}}

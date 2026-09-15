@@ -4,9 +4,13 @@ Pulls `agent-ready` Jira tickets from the MAPCO project, implements them, and op
 requests. Designed in [MAPCO-11374](https://mapcolonies.atlassian.net/browse/MAPCO-11374),
 substrate decided in [MAPCO-11377](https://mapcolonies.atlassian.net/browse/MAPCO-11377).
 
-**Current slice: MAPCO-11431.** It walks the whole Jira state machine with nothing in the
-middle — it claims a ticket and hands it straight back with a comment. It touches no
-repository and writes no code yet.
+**Current slice: MAPCO-11434.** On top of the claim/release cycle (MAPCO-11431) it can now
+hand a claimed ticket to the Claude Agent SDK, let the model change a clone, and run that
+clone's own tests before anyone sees the diff. Nothing is committed, nothing is pushed, and
+no branch is created — that is MAPCO-11436.
+
+The pieces exist but are **not wired into `runCycle` yet**: labelling a ticket `agent-ready`
+today still gets it claimed, commented and handed straight back. See *Known gaps*.
 
 ## Shape
 
@@ -53,6 +57,18 @@ Verified against the live Jira instance in MAPCO-11427, and each one bit a first
 - **Transitions are resolved per issue, never cached.** Transition ids are not portable
   across issue types: id `4` starts work on a Tech Requirement and *ends* it on a Task.
 
+- **The chart sets `prometheus.enabled: false`** while almost every other MapColonies chart
+  sets it true. This service has nothing to scrape: it is outbound-only, with no Service, no
+  Route and no container port, and although `containerConfig.ts` builds a prom-client
+  registry nothing ever serves it over HTTP. Left true, `mclabels` stamps
+  `prometheus.io/scrape: "true"` with port 8080 and `/metrics` onto the pod and Prometheus
+  gets a target that can only ever fail. Flip it the day something starts listening.
+- **`mclabels.environment` is the only key that sets the environment label.** A
+  `global.environment` or a top-level `environment` is ignored by the subchart, and leaving
+  all three unset stamps the literal string `undefined` rather than omitting the label. The
+  commented `#environment:` line in `helm/values.yaml` is where a deploy-time values file
+  supplies it.
+
 ## Ticket titles
 
 The repo a ticket is about comes from its title: `<repo-name>: <feature title>`.
@@ -78,12 +94,42 @@ so refusal is the common path until the convention spreads.
 | `MAX_TICKETS_PER_RUN` | `1` | Tickets one cycle may start |
 | `MAX_CONCURRENT_TICKETS` | `1` | Tickets in flight at once |
 | `GITHUB_TOKEN` | *optional* | Bearer token for repo lookups. A PAT locally; a short-lived App installation token in the cluster once MAPCO-11428 lands. Unauthenticated works at a lower rate limit |
+| `MODEL_AUTH` | `sdk` | Which account model calls are billed to: `sdk` or `api-key`. An unrecognised value refuses to start rather than falling back |
+| `CLAUDE_CODE_OAUTH_TOKEN` | required for `sdk` | A Claude subscription token from `claude setup-token`, from a Secret. Billed to, and rate-limited as, that person — see the warning below |
+| `ANTHROPIC_API_KEY` | required for `api-key` | Anthropic API key, from a Secret. Billed to that Anthropic account |
 
 Raise `MAX_TICKETS_PER_RUN` before ever raising `MAX_CONCURRENT_TICKETS`.
 
 The two bot-identity variables look redundant and are not: Jira takes an *identifier* on
 write and hands back a *display name* on read, and neither is derivable from the other in
 this instance. Set them inconsistently and every claim reads as lost.
+
+### Which account pays for the model
+
+`MODEL_AUTH` is explicit, and deliberately not inferred from whichever credential happens to
+be present. Both credentials look alike to the SDK and bill completely differently, so letting
+the environment decide would make the billed party a property of the pod rather than of a
+decision — and the failure is silent, because a run that quietly spends someone's personal
+quota looks exactly like a working one. One mode's credential is never used for the other; the
+worker refuses to start and names the one it found.
+
+> **⚠️ `sdk` needs Anthropic's approval, and is the default.** Anthropic's Agent SDK
+> documentation states that, unless previously approved, claude.ai login and its rate limits
+> may not be used for products built on the Agent SDK. Running this worker asserts that this
+> deployment has that approval — the code cannot check it.
+
+Three consequences of `sdk` mode that no code can fix:
+
+- **Shared quota.** Rate limits belong to the account, so the worker and that person's own
+  interactive Claude Code use starve each other.
+- **Attribution.** Runs are that person's, not the worker's — the same problem this README
+  already records for the shared Jira service account, now for the model too.
+- **Expiry.** Subscription tokens lapse, and when one does the pod crash-loops rather than
+  running on unclear credentials. That is the intended failure, not a bug.
+
+`api-key` mode has none of these. It is one `MODEL_AUTH` away if the trade stops being
+worth it — and note the flip side of the default: a deployment carrying only
+`ANTHROPIC_API_KEY` now refuses to start rather than quietly using it.
 
 ## Claiming and releasing
 
@@ -106,8 +152,58 @@ part-way, the ticket is left held by the bot and `In Progress`, which the query 
 boot-time orphan sweep (MAPCO-11432) recovers. Unassigning first risks leaving a ticket
 unassigned and `In Progress` — which polls straight back in, forever.
 
+## Implementing a ticket
+
+A claimed ticket, a clone, and a bounded number of attempts. Each attempt hands the ticket to
+the model, then runs the clone's own test command; an attempt counts as done only when that
+command exits zero. Running out of attempts is a give-up, which already has a meaning —
+comment, hand back, count the attempt.
+
+### The model's tool surface is the control
+
+`tools` is the SDK's base-set option, so the tools not named there are never built for the
+session: there is no `Bash` to reach for, no subagent to delegate a `git push` to, and no MCP
+server to be handed. `Bash`, `PowerShell`, the worktree tools, `Agent`/`Task`, the network
+tools, `Skill` and `mcp__*` are denied by name as well, because a deny rule outranks every
+other step of the permission evaluation.
+
+`settingSources: []` with `strictMcpConfig` matters more than it looks. The clone is a
+repository off the internet, and with the project source enabled its own
+`.claude/settings.json` would be read as permission rules — letting the thing being worked on
+widen what may be done to it. The cost is that the clone's `CLAUDE.md` is not loaded either,
+which is a real loss of local convention and the right side of the trade.
+
+There is a sentence in the prompt asking the model not to use git. It is documented as *not*
+being the control; it is there so a model that goes looking is told why, and `deniedTools`
+reports it in the run if one does.
+
+### A write counts only when its result comes back
+
+"The tree changed" is read from the `tool_result` that answers each write, paired by id — not
+from the `tool_use` that requested it. Reading the attempt alone was a real bug: an `Edit`
+whose `old_string` did not match, or a `Write` the permission layer refused, reported a
+change, and the worker went on to test an unmodified clone, watch it pass, and certify a
+verified diff that did not exist. A call that was denied, or that the run never got back to,
+has no result at all and counts as no change.
+
+### The test plan is taken before the model runs
+
+The command is inferred from the pristine clone's `package.json` (`test:ci` → `test` →
+`test:unit`, npm's placeholder script rejected) **before** the first hand-off, and every
+attempt is graded against that snapshot — so a model cannot rewrite the command that grades
+it. Install lifecycle scripts are compared before `npm ci` executes them, and a manifest the
+model moved installs with `--ignore-scripts`.
+
 ## Known gaps
 
+- **Nothing is wired into `runCycle`.** `implementTicket` has no caller: `src/cycle.ts` still
+  claims a ticket and hands it straight back. The slice is a library with tests, not a
+  behaviour the deployed worker has. Wiring it needs the clone step (MAPCO-11433) to produce
+  a working directory and `ReleasePort` bound to `handBackTicket`.
+- **`DescriptionPort` has no implementation.** The poll does not fetch a description and
+  `JiraTicket` carries none, so there is no way to hand the model the ticket's prose — every
+  ticket is refused before the first model turn. Closing it is `description` in `POLL_FIELDS`,
+  on `McpTicket`, in `toTicket` and on `JiraTicket`.
 - The worker knobs are read from the environment rather than `@map-colonies/config`, which
   needs a schema published in `@map-colonies/schemas`. Telemetry still goes through the
   library. Registering a real schema is follow-up work.
@@ -124,7 +220,25 @@ unassigned and `In Progress` — which polls straight back in, forever.
   transition name as a fallback, which covers both shapes, and a `no-transition` refusal
   logs the `offered` names — so the first real run reports the vocabulary rather than
   refusing in silence. Confirm it from that log line before trusting a deployment.
-- `helm lint` needs the private `mclabels` dependency and fails without registry access.
+- **Rendering the chart needs a credential you must supply yourself.** The `mclabels`
+  dependency lives in a private ACR (`oci://acrarolibotnonprod.azurecr.io/helm/infra`) that
+  **rejects anonymous pull** — an unauthenticated `helm dependency build` fails with
+  `401 Unauthorized` from the registry's token endpoint. Once you are logged in, the rest is
+  repeatable:
+
+  ```sh
+  # One-time, per machine. Use your own ACR credential — an AAD login:
+  az acr login --name acrarolibotnonprod
+  # ...or a registry token / service principal, if that is what you were issued:
+  helm registry login acrarolibotnonprod.azurecr.io
+  # Then, from the repo root:
+  helm dependency build helm
+  helm lint helm
+  helm template t helm --set worker.modelSecretName=test-secret
+  ```
+
+  `helm dependency build` writes `helm/charts/mclabels-<version>.tgz`. That is a build
+  artifact: it is covered by the root `.gitignore` `*.tgz` rule and must never be committed.
 
 ## Dry run
 

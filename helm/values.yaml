@@ -4,11 +4,28 @@ global:
   metrics: {}
 
 mclabels:
-  component: worker
+  # Set per environment at deploy time, as in mapproxy-api and the other service charts. Only
+  # `mclabels.environment` feeds the label — `global.environment` and a top-level `environment`
+  # are both ignored by the subchart — and leaving it unset stamps
+  # `mapcolonies.io/environment: undefined` on the pod rather than omitting the label.
+  #environment: development
+  # Must be one of the values mclabels' values.schema.json allows:
+  # frontend | backend | database | proxy-server | cache-server | infrastructure.
+  # There is no "worker" member — this outbound-only poller is a backend process, which is
+  # what every other MapColonies service chart uses (mapproxy-api, cleaner, exporter-trigger).
+  component: backend
   partOf: developer-agent-bot
+  # `gisDomain` is deliberately absent. The raster-owned charts carry it; the common-owned
+  # tooling charts (geojson-viewer) do not, and this is one of those.
   owner: common
   prometheus:
-    enabled: true
+    # False, unlike almost every other chart in the org, because this service has nothing to
+    # scrape. It is outbound-only — no Service, no Route, no container port — and while
+    # `containerConfig.ts` builds a prom-client Registry, nothing ever serves it over HTTP.
+    # Left true, mclabels stamps prometheus.io/scrape=true with port 8080 and /metrics onto
+    # the pod, and Prometheus gets a target that can only ever fail. Flip this the same day
+    # something starts listening, not before.
+    enabled: false
 
 enabled: true
 replicaCount: 1
@@ -68,6 +85,19 @@ worker:
   pollIntervalMs: 300000
   maxTicketsPerRun: 1
   maxConcurrentTickets: 1
+  # Which account the model calls are billed to. `sdk` reads CLAUDE_CODE_OAUTH_TOKEN from the
+  # Secret below — a Claude subscription token from `claude setup-token`; `api-key` reads
+  # ANTHROPIC_API_KEY from it instead.
+  #
+  # `sdk` bills, and is rate-limited as, the person whose token it is. Anthropic's Agent SDK
+  # documentation states that claude.ai login and its rate limits may not be used for products
+  # built on the Agent SDK unless previously approved — running in this mode asserts that this
+  # deployment has that approval. The worker and that person's own interactive use also share
+  # one quota, and the pod will crash-loop when the token expires.
+  modelAuth: 'sdk'
+  # Secret holding the model credential. Key name must be `oauthToken` for modelAuth: sdk,
+  # or `apiKey` for modelAuth: api-key. The pod will not start without it.
+  modelSecretName: ''
 
 env:
   logLevel: info

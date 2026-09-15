@@ -2,14 +2,14 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { AgentConfigError } from '@src/agent/apiKey';
+import { AgentConfigError } from '@src/agent/credential';
 import { DEFAULT_AGENT_LIMITS } from '@src/agent/implement';
 import { createImplementer, type ImplementerOptions } from '@src/agent/implementer';
 import type { DescriptionPort, ReleasePort } from '@src/agent/types';
 import { fakeLogger } from '@tests/helpers/fakeLogger';
 
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
-const WITH_KEY: NodeJS.ProcessEnv = { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-from-the-secret' };
+const WITH_KEY: NodeJS.ProcessEnv = { PATH: '/usr/bin', MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: 'sk-from-the-secret' };
 const WITH_LOGIN: NodeJS.ProcessEnv = { PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' };
 /* eslint-enable @typescript-eslint/naming-convention */
 
@@ -33,8 +33,18 @@ describe('createImplementer', () => {
     expect(() => createImplementer(options({}))).toThrow(AgentConfigError);
   });
 
-  it('should refuse an interactive login rather than authenticating as a person.', () => {
-    expect(() => createImplementer(options(WITH_LOGIN))).toThrow(/never as whoever logged in/u);
+  it('should refuse an API key that the configured mode did not ask for.', () => {
+    // The operator mistake worth catching, now that `sdk` is the default: a deployment carrying
+    // only ANTHROPIC_API_KEY meant to bill that account and never said so, and using it anyway
+    // would bill an account nobody chose.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable names */
+    expect(() => createImplementer(options({ PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-from-the-secret' }))).toThrow(
+      /one mode's credential is never used for the other/u
+    );
+  });
+
+  it('should build on a subscription token with no mode set, because sdk is the default.', () => {
+    expect(() => createImplementer(options(WITH_LOGIN))).not.toThrow();
   });
 
   it('should come up with the conservative bounds when none were configured.', () => {

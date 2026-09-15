@@ -17,8 +17,9 @@ import type { AgentLimits, DescriptionPort, ReleasePort } from './types';
  * Kept beside the code it composes rather than in an entry point on purpose. `src/index.ts` and
  * `runCycle` belong to the wiring slice, and every collaborator they would otherwise construct
  * by hand is one more thing that can be wired subtly wrong — a `NpmTestRunner` built on a
- * command runner with no environment scrubbing, say, or an agent constructed with a key read
- * somewhere other than `readApiKey`. Calling this leaves them one line and no choices.
+ * command runner with no environment scrubbing, say, or an agent constructed with a credential
+ * read somewhere other than `readModelCredential`. Calling this leaves them one line and no
+ * choices.
  */
 interface ImplementerOptions {
   readonly logger: Logger;
@@ -28,7 +29,7 @@ interface ImplementerOptions {
   readonly description: DescriptionPort;
   /** Overridden only to spend less. The defaults are the conservative ones. */
   readonly limits?: AgentLimits;
-  /** Read for the API key, and stripped of the worker's own secrets before the model sees it. */
+  /** Read for the model credential, and stripped of every secret before the model sees it. */
   readonly env?: NodeJS.ProcessEnv;
   readonly model?: string;
 }
@@ -36,10 +37,11 @@ interface ImplementerOptions {
 /**
  * Everything `implementTicket` needs, built from the environment the pod was given.
  *
- * Throws `AgentConfigError` if there is no `ANTHROPIC_API_KEY`, which is why this belongs at
- * boot and not inside a cycle: a worker with no credential cannot do the one thing it exists
- * for, and finding that out mid-cycle means a ticket claimed and handed straight back. Failing
- * at start-up makes it a pod that will not come up — the loudest thing a missing Secret can be.
+ * Throws `AgentConfigError` if the credential for the configured `MODEL_AUTH` mode is missing,
+ * which is why this belongs at boot and not inside a cycle: a worker with no credential cannot
+ * do the one thing it exists for, and finding that out mid-cycle means a ticket claimed and
+ * handed straight back. Failing at start-up makes it a pod that will not come up — the loudest
+ * thing a missing Secret, or an expired subscription token, can be.
  */
 function createImplementer(options: ImplementerOptions): ImplementDeps {
   const { logger, release, description, limits = DEFAULT_AGENT_LIMITS, env = process.env, model } = options;
