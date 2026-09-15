@@ -64,6 +64,7 @@ function result(overrides: Record<string, unknown> = {}): unknown {
     is_error: false,
     result: 'Added a retry to the fetch helper.',
     modelUsage: { 'claude-opus-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 7, costUSD: 0.5 } },
+    num_turns: 3,
     permission_denials: [],
     ...overrides,
   };
@@ -260,5 +261,22 @@ describe('foldMessages', () => {
 
   it('should report no usage at all when the run produced no result.', () => {
     expect(foldMessages([]).usage).toStrictEqual({ input: 0, output: 0, cacheRead: 0, costUsd: 0 });
+  });
+
+  it("should report the run's own turn count, because the per-ticket ceiling is counted in turns.", () => {
+    // Not a count of messages and not `1`: `MAX_TURNS_PER_TICKET` is charged from this number,
+    // and a hand-off that reported one turn instead of twelve would raise the ceiling twelvefold.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- the SDK's wire format */
+    expect(foldMessages([...wrote('Edit'), result({ num_turns: 12 })]).turns).toBe(12);
+  });
+
+  it('should report no turns for a run that produced no result.', () => {
+    expect(foldMessages([]).turns).toBe(0);
+  });
+
+  it('should report no turns rather than guessing when the result states none.', () => {
+    // The safe direction: an invented count charges a ticket for turns nobody took.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- the SDK's wire format */
+    expect(foldMessages([...wrote('Edit'), result({ num_turns: undefined })]).turns).toBe(0);
   });
 });

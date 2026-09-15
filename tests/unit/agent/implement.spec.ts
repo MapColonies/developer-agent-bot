@@ -47,8 +47,11 @@ function usage(input: number): TokenUsage {
   return { input, output: 1, cacheRead: 0, costUsd: 0.5 };
 }
 
+/** Turns one fake hand-off reports. Any number but 1 would do; 1 is the value that hides a bug. */
+const TURNS_PER_RUN = 7;
+
 function changed(input = 100): AgentRun {
-  return { outcome: 'changed', usage: usage(input), summary: 'edited the helper', deniedTools: [] };
+  return { outcome: 'changed', usage: usage(input), turns: TURNS_PER_RUN, summary: 'edited the helper', deniedTools: [] };
 }
 
 /** Hands out queued runs and refuses to invent one, so an over-run of the bound fails loudly. */
@@ -154,7 +157,7 @@ describe('implementTicket', () => {
   });
 
   it('should never verify a change the model did not make.', async () => {
-    const agent = fakeAgent([{ outcome: 'no-change', usage: usage(10), summary: 'nothing to do', deniedTools: [] }]);
+    const agent = fakeAgent([{ outcome: 'no-change', usage: usage(10), turns: TURNS_PER_RUN, summary: 'nothing to do', deniedTools: [] }]);
     const tests = fakeTests([]);
     const release = fakeRelease();
 
@@ -363,7 +366,10 @@ describe('implementTicket', () => {
     // the test is right and writes nothing. The diff from attempt one is still in the working
     // tree, so a note saying the ticket was too thin to act on would be false, and it would
     // throw away the only output a person could use.
-    const agent = fakeAgent([changed(), { outcome: 'no-change', usage: usage(10), summary: 'the test looks right to me', deniedTools: [] }]);
+    const agent = fakeAgent([
+      changed(),
+      { outcome: 'no-change', usage: usage(10), turns: TURNS_PER_RUN, summary: 'the test looks right to me', deniedTools: [] },
+    ]);
     const release = fakeRelease();
 
     const result = await implementTicket(assignment, deps(agent, fakeTests([FAILED]), release));
@@ -401,7 +407,7 @@ describe('implementTicket', () => {
   });
 
   it('should log which tools the model was refused, so a denial is visible in the pod.', async () => {
-    const agent = fakeAgent([{ outcome: 'changed', usage: usage(1), summary: 'edited', deniedTools: ['Bash'] }]);
+    const agent = fakeAgent([{ outcome: 'changed', usage: usage(1), turns: TURNS_PER_RUN, summary: 'edited', deniedTools: ['Bash'] }]);
     const wired = deps(agent, fakeTests([PASSED]), fakeRelease());
 
     await implementTicket(assignment, wired);

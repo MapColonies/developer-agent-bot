@@ -6,42 +6,40 @@
  * It exercises the same `runCycle` seam the deployed worker runs, so what it proves is
  * about the worker and not about the harness.
  *
- * Not read-only: this walks the same claim-and-release path the deployed worker walks, so
- * it comments on, assigns and transitions a real ticket (MAPCO-11431).
+ * **This is the whole pipeline now, not a claim and a release.** It claims a real ticket, clones
+ * the repository its title names, hands the ticket to the model inside that clone, runs the
+ * repository's own tests, and on a passing run pushes an `agent/` branch and opens a real pull
+ * request. It costs real tokens against the configured key and it writes to real tickets. The
+ * spend ceilings apply — `MAX_TICKETS_PER_DAY` counts per process, so a dry run gets its own
+ * allowance — and the cheapest way to keep a first run small is to set them low on the command
+ * line.
  */
 import 'reflect-metadata';
 import { jsLogger } from '@map-colonies/js-logger';
-import { loadWorkerConfig } from '@common/workerConfig';
+import { budgetOf, loadWorkerConfig } from '@common/workerConfig';
 import { ATTEMPT_CAP, runCycle } from './cycle';
 import { McpJira } from './jira/mcpJira';
-import { RestGitHub } from './github/restGitHub';
-import { describeRefusal, resolveRepo } from './tickets/resolveRepo';
 import { buildPollQuery } from './jira/query';
+import { createWorker } from './worker';
 
 async function dryRun(): Promise<void> {
   const config = loadWorkerConfig();
   const logger = await jsLogger({ level: 'debug', prettyPrint: true });
 
-  logger.info({ msg: 'dry run starting', mcpUrl: config.mcpUrl, jql: buildPollQuery(ATTEMPT_CAP) });
+  logger.info({
+    msg: 'dry run starting',
+    mcpUrl: config.mcpUrl,
+    jql: buildPollQuery(ATTEMPT_CAP),
+    workspaceRoot: config.workspaceRoot,
+    ...budgetOf(config).ticket,
+    maxTicketsPerDay: budgetOf(config).maxTicketsPerDay,
+  });
 
   const jira = new McpJira(config.mcpUrl);
-  const github = new RestGitHub(process.env.GITHUB_TOKEN);
 
   try {
-    const result = await runCycle({ jira, logger, config });
+    const result = await runCycle(createWorker({ jira, logger, config }));
     logger.info({ msg: 'dry run complete', ...result });
-
-    // Not part of the cycle yet — MAPCO-11433 wires it in. Shown here so a dry run
-    // reports what the next slice would decide about each ticket it found.
-    for (const ticket of await jira.search(buildPollQuery(ATTEMPT_CAP), config.maxTicketsPerRun)) {
-      const resolution = await resolveRepo(ticket, github);
-
-      if (resolution.ok) {
-        logger.info({ msg: 'repo resolved', key: ticket.key, titleSaid: ticket.summary.split(':')[0], repo: resolution.repo });
-      } else {
-        logger.warn({ msg: 'would refuse', key: ticket.key, reason: resolution.reason, comment: describeRefusal(resolution) });
-      }
-    }
   } finally {
     await jira.close();
   }

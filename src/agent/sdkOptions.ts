@@ -275,6 +275,18 @@ function usageOf(result: Record<string, unknown>): TokenUsage {
     );
 }
 
+/**
+ * How many model turns the run took, off the SDK's own count.
+ *
+ * `num_turns` rather than counting assistant messages: the SDK emits its own tally on the
+ * result, a turn is not one message, and a count derived from the stream would drift the day a
+ * new message type arrives. Absent or non-numeric reads as zero, which is the safe direction —
+ * an over-count would charge a ticket for turns nobody took.
+ */
+function turnsOf(result: Record<string, unknown>): number {
+  return readNumber(result, 'num_turns');
+}
+
 function deniedIn(result: Record<string, unknown>): string[] {
   const denials = result['permission_denials'];
 
@@ -334,6 +346,7 @@ function foldMessages(messages: readonly unknown[]): AgentRun {
     return {
       outcome: 'gave-up',
       usage: NO_USAGE,
+      turns: 0,
       summary: 'The model produced no result: the run ended before the turn completed.',
       deniedTools: [],
     };
@@ -344,6 +357,7 @@ function foldMessages(messages: readonly unknown[]): AgentRun {
   return {
     outcome: outcomeOf(failed, wrote),
     usage: usageOf(result),
+    turns: turnsOf(result),
     summary: summaryOf(result, failed),
     deniedTools: deniedIn(result),
   };

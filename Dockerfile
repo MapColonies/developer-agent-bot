@@ -12,7 +12,10 @@ RUN npm run build
 
 FROM node:24.10.0-alpine3.22 AS production
 
-RUN apk add dumb-init
+# `git` because the worker clones the repository a ticket names and then commits and pushes to
+# it — that is worker code, not model tooling: the Agent SDK is given file and test tools only
+# and has no shell to reach a binary with (see MODEL_TOOLS in src/agent/sdkOptions.ts).
+RUN apk add --no-cache dumb-init git
 
 ENV NODE_ENV=production
 

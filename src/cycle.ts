@@ -1,30 +1,41 @@
 import type { Logger } from '@map-colonies/js-logger';
 import type { WorkerConfig } from '@common/workerConfig';
+import type { BudgetGuard, CycleGuard } from './budget/guard';
+import type { DeliveryPort } from './deliver';
 import { buildPollQuery } from './jira/query';
 import type { JiraPort, JiraTicket } from './jira/types';
-import { claimTicket, releaseTicket } from './tickets/claim';
+import { claimTicket } from './tickets/claim';
+import type { HandBackOnce } from './tickets/handBackOnce';
 
 /** The attempt cap from MAPCO-11432. Enforced in the query so a capped ticket is never even seen. */
 const ATTEMPT_CAP = 2;
-
-/**
- * What the worker says on a ticket it hands straight back.
- *
- * Written to be read by whoever finds the ticket back in Open and wonders what touched it.
- * It names what was tried, which in this slice is nothing at all.
- */
-const HANDED_BACK_NOTE = [
-  'Picked this up automatically and handed it straight back.',
-  '',
-  'This build of the developer agent can claim a ticket and release it, but there is nothing in between yet (MAPCO-11431) — no branch, no changes, no pull request. Nothing was modified, and this does not count as an attempt.',
-  '',
-  'The ticket is available again for whoever wants it next.',
-].join('\n');
 
 interface CycleDeps {
   readonly jira: JiraPort;
   readonly logger: Logger;
   readonly config: WorkerConfig;
+  /**
+   * What happens to a claimed ticket: clone, implement, verify, open a pull request.
+   *
+   * The one call this seam was missing. Everything around it — the poll, the claim, the
+   * concurrency cap, the per-ticket containment — worked already and proved only itself.
+   */
+  readonly delivery: DeliveryPort;
+  /**
+   * The process's spend ceilings. One cycle is opened per run; see `runCycle`.
+   *
+   * Built once per process because the daily counter is a property of the day and the process is
+   * what spans it. Passing it in rather than building it here is what makes that lifetime the
+   * caller's to get right, and `src/worker.ts` is where it is got right.
+   */
+  readonly budget: BudgetGuard;
+  /**
+   * A fresh at-most-once hand-back. Called once per ticket, and never shared between two.
+   *
+   * The invariant it carries is that a ticket is handed back once however many give-up paths
+   * fire on it — see `createHandBackOnce`.
+   */
+  readonly handBack: () => HandBackOnce;
 }
 
 interface CycleResult {
@@ -36,19 +47,40 @@ interface CycleResult {
 }
 
 /**
+ * What the worker says on a ticket it was holding when something unexpected went wrong.
+ *
+ * The alternative is worse than it sounds. `releaseTicket` and `handBackTicket` deliberately keep
+ * hold of a ticket they cannot return to Open, on the argument that the boot-time orphan sweep
+ * recovers it — but that sweep is MAPCO-11432 and does not exist yet, so a ticket dropped here is
+ * a ticket assigned to a bot for ever, invisible to the poll and to whoever wrote it. Handing it
+ * back costs an attempt and says so.
+ */
+function failedNote(error: unknown): string {
+  return [
+    'Picked this up automatically and stopped part-way through with an error.',
+    '',
+    '{code}',
+    error instanceof Error ? error.message : String(error),
+    '{code}',
+    '',
+    'This is the worker failing rather than the ticket being wrong, so it is worth a look. A branch under `agent/` may exist without a pull request; nothing was merged and nothing was approved. This counts as an attempt; the ticket is available again.',
+  ].join('\n');
+}
+
+/**
  * Work through the run's tickets, no more than `maxConcurrentTickets` at a time.
  *
  * Both caps default to 1, which makes this sequential — the interesting case is a
  * deployment that raises them, where the concurrency cap is what keeps the worker from
  * claiming a whole page of tickets at once.
  */
-async function handleTickets(tickets: JiraTicket[], deps: CycleDeps): Promise<number> {
+async function handleTickets(tickets: JiraTicket[], deps: CycleDeps, cycle: CycleGuard): Promise<number> {
   const { maxConcurrentTickets } = deps.config;
   let started = 0;
 
   for (let index = 0; index < tickets.length; index += maxConcurrentTickets) {
     const batch = tickets.slice(index, index + maxConcurrentTickets);
-    const outcomes = await Promise.all(batch.map(async (ticket) => handleTicket(ticket, deps)));
+    const outcomes = await Promise.all(batch.map(async (ticket) => handleTicket(ticket, deps, cycle)));
 
     started += outcomes.filter((outcome) => outcome).length;
   }
@@ -56,45 +88,81 @@ async function handleTickets(tickets: JiraTicket[], deps: CycleDeps): Promise<nu
   return started;
 }
 
+/** Hand a held ticket back after an unexpected failure, without letting that fail the run too. */
+async function releaseAfterFailure(ticket: JiraTicket, error: unknown, handBack: HandBackOnce, logger: Logger): Promise<void> {
+  try {
+    const released = await handBack.handBack(ticket, failedNote(error));
+
+    if (!released.ok) {
+      logger.error({ msg: 'failed ticket could not be handed back', key: ticket.key, reason: released.reason });
+    }
+  } catch (err) {
+    // The second failure in a row. Nothing left to try, and a throw from in here would replace
+    // the original error in the log with a complaint about Jira.
+    logger.error({ msg: 'failed ticket could not be handed back', key: ticket.key, err });
+  }
+}
+
 /**
- * Claim one ticket and hand it back. Returns whether the worker actually held it.
+ * Claim one ticket, work it, and make sure it does not stay held. Returns whether the worker
+ * actually held it.
  *
  * Nothing in here is allowed to end the run: one ticket the worker cannot take says
  * nothing about the next one, and a run that dies on the first refusal would stall the
  * whole queue behind it.
+ *
+ * The claim goes through `cycle.start` rather than straight to `claimTicket`, and the indirection
+ * is load-bearing: it is what checks the day still has room for a ticket *before* anything is
+ * written, and what counts the ticket once the worker actually holds it. A run that has hit
+ * `MAX_TICKETS_PER_DAY` writes nothing at all — a ticket claimed and then dropped for a spend
+ * ceiling has already put a bot's name on a human's ticket and notified its watchers.
  */
-async function handleTicket(ticket: JiraTicket, deps: CycleDeps): Promise<boolean> {
-  const { jira, logger, config } = deps;
+async function handleTicket(ticket: JiraTicket, deps: CycleDeps, cycle: CycleGuard): Promise<boolean> {
+  const { jira, logger, config, delivery } = deps;
+  const handBack = deps.handBack();
+  let held = false;
 
   try {
-    const claim = await claimTicket(ticket, jira, config.bot);
+    const start = await cycle.start(ticket, async () => claimTicket(ticket, jira, config.bot));
 
-    if (!claim.ok) {
+    if (!start.ok) {
+      if (start.reason === 'daily-cap') {
+        // Already reported by the guard, at info: this is a ceiling doing its job, not a fault.
+        return false;
+      }
+
       // `saw` and `offered` are the diagnostic half of a refusal. A `lost-race` reporting
       // the bot's own name means JIRA_BOT_DISPLAY_NAME is wrong, not that a human raced;
       // `offered` names the transitions a workflow actually has.
-      logger.warn({ msg: 'not claimed', key: ticket.key, reason: claim.reason, saw: claim.saw, offered: claim.offered });
+      logger.warn({ msg: 'not claimed', key: ticket.key, reason: start.claim.reason, saw: start.claim.saw, offered: start.claim.offered });
 
       return false;
     }
 
+    held = true;
     logger.info({ msg: 'claimed', key: ticket.key });
 
-    const release = await releaseTicket(ticket, HANDED_BACK_NOTE, jira);
+    const delivered = await delivery.deliver({ ticket, meter: start.ticket, handBack });
 
-    if (!release.ok) {
-      // Still assigned to the bot and still In Progress, on purpose — see `releaseTicket`.
-      // The orphan sweep on boot (MAPCO-11432) is what gets it back.
-      logger.error({ msg: 'held ticket could not be released', key: ticket.key, reason: release.reason, offered: release.offered });
+    if (delivered.ok) {
+      logger.info({ msg: 'pull request opened for ticket', key: ticket.key, branch: delivered.branch, url: delivered.url });
     } else {
-      logger.info({ msg: 'released', key: ticket.key });
+      // `handedBack: false` is the state worth finding in a log: the ticket is still assigned to
+      // the bot and still In Progress, which the poll query skips, so nothing will pick it up.
+      logger.warn({ msg: 'ticket not delivered', key: ticket.key, reason: delivered.reason, handedBack: delivered.handedBack });
     }
 
     return true;
   } catch (error) {
     logger.error({ msg: 'ticket failed', key: ticket.key, err: error });
 
-    return false;
+    if (held) {
+      await releaseAfterFailure(ticket, error, handBack, logger);
+    }
+
+    // Truthfully: the worker did hold this one, whatever happened next. The alternative reports a
+    // ticket that was claimed, worked and commented on as one the run never touched.
+    return held;
   }
 }
 
@@ -105,12 +173,17 @@ async function handleTicket(ticket: JiraTicket, deps: CycleDeps): Promise<boolea
  * scheduler calls it, and so do the tests. Later slices add cases here rather than
  * standing up harnesses of their own.
  *
- * In this slice it walks the whole Jira state machine with nothing in the middle: claim a
- * ticket, then release it again (MAPCO-11431).
+ * A cycle is opened on the budget guard for each run, and that is not a formality. The daily
+ * counter belongs to the process and has to survive every cycle, while the spend figure belongs
+ * to the single "cycle complete" line it is reported on — holding both on one object was a real
+ * bug, in which the spend never reset and a per-cycle field carried the process's lifetime total,
+ * so any sum over those lines double-counted. `cycle.runLine()` is that cycle's own spend, which
+ * is why it replaces the `tokensSpent: 0` this line used to carry.
  */
 async function runCycle(deps: CycleDeps): Promise<CycleResult> {
   const { jira, logger, config } = deps;
   const jql = buildPollQuery(ATTEMPT_CAP);
+  const cycle = deps.budget.cycle();
 
   let tickets: JiraTicket[];
   try {
@@ -126,7 +199,7 @@ async function runCycle(deps: CycleDeps): Promise<CycleResult> {
   const more = tickets.length > config.maxTicketsPerRun;
   const eligible = tickets.slice(0, config.maxTicketsPerRun);
 
-  const started = await handleTickets(eligible, deps);
+  const started = await handleTickets(eligible, deps, cycle);
 
   const result: CycleResult = {
     found: eligible.length,
@@ -142,11 +215,11 @@ async function runCycle(deps: CycleDeps): Promise<CycleResult> {
     msg: 'cycle complete',
     ...result,
     keys: eligible.map((ticket) => ticket.key),
-    tokensSpent: 0,
+    ...cycle.runLine(),
   });
 
   return result;
 }
 
-export { ATTEMPT_CAP, HANDED_BACK_NOTE, runCycle };
+export { ATTEMPT_CAP, failedNote, runCycle };
 export type { CycleDeps, CycleResult };

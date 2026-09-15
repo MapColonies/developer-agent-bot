@@ -8,6 +8,18 @@ import type { JiraPort, JiraTicket, JiraTransition } from './types';
 
 const POLL_FIELDS = 'summary,status,labels,assignee,issuetype,created';
 
+/**
+ * The fields of a single issue read back by key, which is `POLL_FIELDS` plus the description.
+ *
+ * Separate from `POLL_FIELDS` rather than added to it, and the difference is the whole point.
+ * The poll asks for one more ticket than it will work and drops the rest, so a description in
+ * `POLL_FIELDS` would fetch prose for tickets nobody touches — on every tick, for the lifetime
+ * of the worker. A ticket read by key is one the worker has decided it cares about, so that is
+ * where the prose is worth paying for. See `DescriptionPort` (src/agent/types.ts), whose
+ * implementation is the only caller that needs it.
+ */
+const ISSUE_FIELDS = `${POLL_FIELDS},description`;
+
 /* eslint-disable @typescript-eslint/naming-convention -- these mirror the MCP server's wire format */
 interface McpTransition {
   id: number | string;
@@ -18,6 +30,7 @@ interface McpTransition {
 interface McpTicket {
   key: string;
   summary?: string;
+  description?: string;
   labels?: string[];
   status?: { name?: string };
   issue_type?: { name?: string };
@@ -49,7 +62,7 @@ class McpJira implements JiraPort {
 
   public async getIssue(issueKey: string): Promise<JiraTicket | null> {
     // eslint-disable-next-line @typescript-eslint/naming-convention -- MCP wire format
-    const raw = await this.call('jira_get_issue', { issue_key: issueKey, fields: POLL_FIELDS, comment_limit: 0 });
+    const raw = await this.call('jira_get_issue', { issue_key: issueKey, fields: ISSUE_FIELDS, comment_limit: 0 });
     const parsed = JSON.parse(raw) as McpTicket | null;
 
     return parsed?.key === undefined ? null : toTicket(parsed);
@@ -172,6 +185,10 @@ function toTicket(issue: McpTicket): JiraTicket {
   return {
     key: issue.key,
     summary: issue.summary ?? '',
+    // Left absent rather than defaulted to `''`: a ticket off the poll was never asked about its
+    // description, and reporting "no description" for a field nobody requested is the difference
+    // between a ticket the worker should refuse and one it has simply not read yet.
+    ...(typeof issue.description === 'string' ? { description: issue.description } : {}),
     issueType: issue.issue_type?.name ?? 'unknown',
     status: issue.status?.name ?? 'unknown',
     // The server omits `labels` entirely when a ticket has none.
@@ -180,5 +197,5 @@ function toTicket(issue: McpTicket): JiraTicket {
   };
 }
 
-export { assigneeFields, labelsFields, McpJira, toTicket, toTransition };
+export { assigneeFields, ISSUE_FIELDS, labelsFields, McpJira, POLL_FIELDS, toTicket, toTransition };
 export type { McpTicket, McpTransition };

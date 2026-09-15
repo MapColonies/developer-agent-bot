@@ -8,8 +8,10 @@
  * these knobs is follow-up work, not a blocker for the current slice.
  */
 
+import { tmpdir } from 'node:os';
 import type { BudgetConfig } from '../budget/types';
 import type { BotIdentity } from '../tickets/claim';
+import type { GitIdentity } from '../vcs/types';
 
 interface WorkerConfig {
   /** How often the internal scheduler runs a cycle. */
@@ -35,6 +37,26 @@ interface WorkerConfig {
    * conservative defaults below, and never "no ceiling".
    */
   readonly budget?: BudgetConfig;
+  /**
+   * Where the per-ticket clones are made.
+   *
+   * A mounted volume in the pod, `os.tmpdir()` on a laptop. A container's root filesystem is
+   * read-only under the org's OpenShift policy and a clone plus its `node_modules` is not small,
+   * so this is a `emptyDir` in the chart rather than wherever the process happens to start.
+   */
+  readonly workspaceRoot: string;
+  /**
+   * Who the worker's commits are authored by.
+   *
+   * Configured rather than derived, because the real answer belongs to the GitHub App
+   * (MAPCO-11428): once it exists this is `{app-slug}[bot]` and
+   * `{app-id}+{app-slug}[bot]@users.noreply.github.com`, and the app id is not something this
+   * worker can know. The defaults are a valid `users.noreply.github.com` address in the
+   * meantime, so a commit is attributable and GitHub accepts it.
+   */
+  readonly commitIdentity: GitIdentity;
+  /** Overrides the model the agent runs. Unset means `DEFAULT_MODEL` in agent/sdkOptions.ts. */
+  readonly model?: string;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 300_000;
@@ -59,6 +81,19 @@ const DEFAULT_BUDGET: BudgetConfig = {
   maxTicketsPerDay: DEFAULT_MAX_TICKETS_PER_DAY,
 };
 
+/**
+ * Who a commit is authored by until the GitHub App exists.
+ *
+ * A `users.noreply.github.com` address is the form GitHub accepts without asking whether the
+ * mailbox is real, and the `[bot]` suffix is the convention that makes a machine author
+ * recognisable in `git log` and in a review. It is deliberately not a person's address: an
+ * agent-authored commit must never look like somebody's work.
+ */
+const DEFAULT_COMMIT_IDENTITY: GitIdentity = {
+  name: 'mapcolonies-developer-agent[bot]',
+  email: 'mapcolonies-developer-agent[bot]@users.noreply.github.com',
+};
+
 class ConfigError extends Error {
   public constructor(message: string) {
     super(message);
@@ -78,6 +113,13 @@ function readInt(env: NodeJS.ProcessEnv, name: string, fallback: number): number
   }
 
   return parsed;
+}
+
+/** An optional string, with absent and empty treated the same — a helm value is often `""`. */
+function readText(env: NodeJS.ProcessEnv, name: string, fallback: string): string {
+  const raw = env[name]?.trim() ?? '';
+
+  return raw === '' ? fallback : raw;
 }
 
 function readRequired(env: NodeJS.ProcessEnv, name: string, why: string): string {
@@ -119,6 +161,8 @@ function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     maxTicketsPerDay: readInt(env, 'MAX_TICKETS_PER_DAY', DEFAULT_BUDGET.maxTicketsPerDay),
   };
 
+  const model = env['AGENT_MODEL']?.trim() ?? '';
+
   return {
     pollIntervalMs: readInt(env, 'POLL_INTERVAL_MS', DEFAULT_POLL_INTERVAL_MS),
     maxTicketsPerRun: readInt(env, 'MAX_TICKETS_PER_RUN', 1),
@@ -126,8 +170,16 @@ function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
     mcpUrl,
     bot,
     budget,
+    workspaceRoot: readText(env, 'WORKSPACE_ROOT', tmpdir()),
+    commitIdentity: {
+      name: readText(env, 'AGENT_GIT_NAME', DEFAULT_COMMIT_IDENTITY.name),
+      email: readText(env, 'AGENT_GIT_EMAIL', DEFAULT_COMMIT_IDENTITY.email),
+    },
+    // Absent rather than empty, so `sdkOptions` falls back to its own default instead of asking
+    // the SDK for a model called "".
+    ...(model === '' ? {} : { model }),
   };
 }
 
-export { budgetOf, ConfigError, DEFAULT_BUDGET, loadWorkerConfig };
+export { budgetOf, ConfigError, DEFAULT_BUDGET, DEFAULT_COMMIT_IDENTITY, loadWorkerConfig };
 export type { WorkerConfig };

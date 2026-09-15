@@ -8,6 +8,8 @@
  * property of code, not a sentence in an instruction file.
  */
 
+import type { Repo } from '../github/types';
+
 /** Who a commit is authored by. */
 interface GitIdentity {
   /** Author and committer name. For the App this is `{app-slug}[bot]`. */
@@ -24,11 +26,15 @@ interface GitIdentity {
  * nothing to rotate. A GitHub App installation token lasts an hour; a run that outlives one
  * mints another rather than holding one open.
  *
- * The implementation is the GitHub App itself, which is MAPCO-11428 and does not exist yet.
+ * The real implementation is the GitHub App itself, which is MAPCO-11428 and does not exist yet.
  * Nothing here signs an App JWT — this slice depends on the contract only, so that the
  * "never a static token" rule is expressed in the type rather than in a README paragraph.
- * The same credential is what opens the pull request, which is why the port lives beside git
- * rather than beside either caller.
+ * The same credential is what clones the repository and opens the pull request, which is why the
+ * port lives beside git rather than beside any one caller.
+ *
+ * What is bound to it today is `envTokenProvider` (src/vcs/envToken.ts), which reads one static
+ * `GITHUB_TOKEN` and therefore honours the shape but not the promise. It exists to be deleted;
+ * everything around it already treats the credential as short-lived.
  */
 interface TokenProvider {
   mint: () => Promise<string>;
@@ -72,4 +78,39 @@ interface GitPort {
   push: (branch: string) => Promise<void>;
 }
 
-export type { GitIdentity, GitPort, TokenProvider };
+/**
+ * One ticket's clone, and the promise that it goes away again.
+ *
+ * `dispose` is separate from `create` rather than a scope-bounded callback because the two are
+ * not symmetric in the caller: the clone is made once and then handed to three different steps
+ * (the model, the test runner, the publish path), and a callback would have to wrap all of them
+ * in one function whose signature grew with every slice. What the caller owes is a `finally`.
+ */
+interface Workspace {
+  /** The clone, absolute. This is the `workdir` the model is confined to. */
+  readonly dir: string;
+  /**
+   * Remove the workspace. Never rejects, and safe to call more than once.
+   *
+   * Both properties are there because the only correct place to call this is a `finally`, where
+   * a rejection would replace the outcome the caller was about to report with a complaint about
+   * a directory. A cleanup that failed is worth a log line and nothing more; MAPCO-11433's
+   * "cleaned up on every path" is about the disk, not about the ticket.
+   */
+  dispose: () => Promise<void>;
+}
+
+/**
+ * Where the worker gets a checkout to work in.
+ *
+ * Deliberately not a member of `GitPort`: that port is what the worker does to a checkout it
+ * already has, and its whole argument is that a capability which does not exist cannot be
+ * mis-used. Cloning is the act that *creates* the checkout, it happens before there is a
+ * `GitPort` at all, and it is the one git operation the publish path has no business reaching.
+ */
+interface WorkspacePort {
+  /** Clone `repo` at its default branch into a directory nothing else is using. */
+  create: (repo: Repo) => Promise<Workspace>;
+}
+
+export type { GitIdentity, GitPort, TokenProvider, Workspace, WorkspacePort };

@@ -65,10 +65,11 @@ class SdkAgent implements AgentPort {
  * for this to fall back to — `readApiKey` refuses to take one — and no branch here that could
  * grow one later.
  *
- * Composed at an entry point (src/index.ts, src/dryRun.ts) alongside `new McpJira(...)`, in the
- * same style as every other collaborator in the worker path: plain construction, no container.
- * That wiring is not part of this slice — the entry points also need the clone from MAPCO-11433
- * and the release path from MAPCO-11431 before there is anything to hand this.
+ * Composed once at boot by `createImplementer`, which `createWorker` (src/worker.ts) calls
+ * alongside `new McpJira(...)` — plain construction, no container, in the same style as every
+ * other collaborator in the worker path. Once per process and not once per ticket, because this
+ * is where the credential is read: a worker with no key must fail to come up rather than claim a
+ * ticket and discover it.
  */
 function createSdkAgent(env: NodeJS.ProcessEnv = process.env, model?: string): SdkAgent {
   return new SdkAgent({ apiKey: readApiKey(env), model, env });

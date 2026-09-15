@@ -143,7 +143,7 @@ async function runAgent(request: AgentRunRequest, deps: ImplementDeps): Promise<
   } catch (error) {
     deps.logger.error({ msg: 'agent run failed', key: request.task.key, err: error });
 
-    return { outcome: 'gave-up', usage: NO_USAGE, summary: error instanceof Error ? error.message : String(error), deniedTools: [] };
+    return { outcome: 'gave-up', usage: NO_USAGE, turns: 0, summary: error instanceof Error ? error.message : String(error), deniedTools: [] };
   }
 }
 
