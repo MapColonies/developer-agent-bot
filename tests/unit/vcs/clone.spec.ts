@@ -177,6 +177,20 @@ describe('CloneWorkspace', () => {
     await expect(readdir(root)).resolves.toStrictEqual([]);
   });
 
+  it('should leave nothing behind when the credential cannot be minted.', async () => {
+    // The same disk-filling path as a failed clone, one step earlier: `mint` throws on a missing
+    // `GITHUB_TOKEN`, so a directory made before it is one no `catch` in `create` would remove.
+    const root = await scratchRoot();
+    const failing: TokenProvider = {
+      mint: async (): Promise<string> => Promise.reject(new Error('GITHUB_TOKEN is not set')),
+    };
+    const workspaces = workspaceFor({ root, run: recordingGit(), tokens: failing });
+
+    await expect(workspaces.create(repoAt('https://github.com/MapColonies/some-service.git'))).rejects.toThrow('GITHUB_TOKEN');
+
+    await expect(readdir(root)).resolves.toStrictEqual([]);
+  });
+
   it('should hand the credential to git through the environment, never in its argv.', async () => {
     // argv is world-readable through `/proc/<pid>/cmdline`; the environment is readable by the
     // process owner alone. A token in the clone's argv is one any process on the host can read.

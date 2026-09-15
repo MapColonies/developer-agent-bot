@@ -49,8 +49,8 @@ const FILE = 'file:';
  *
  * A throw and not a refusal value, and the same argument as `GitGuardError`: a caller offering a
  * remote outside the org is a bug in the caller, not a state the pipeline is expected to reach.
- * It still lands on the ticket, because `deliverTicket` turns a failed workspace into a hand-back
- * rather than losing the ticket over it.
+ * It still lands on the ticket, because `DeliveryPort.deliver` (src/deliver.ts) turns a failed
+ * workspace into a hand-back rather than losing the ticket over it.
  */
 class CloneRefusedError extends Error {
   public constructor(message: string) {
@@ -139,11 +139,15 @@ class CloneWorkspace implements WorkspacePort {
     // will not clone from should cost nothing and leave nothing.
     const credential = credentialFor(repo.cloneUrl, repo);
 
+    // Minted before the directory exists, so a credential this worker cannot produce leaves
+    // nothing behind either: `mint` throws on a missing `GITHUB_TOKEN`, and between `mkdtemp`
+    // and the `try` below there is no `catch` to remove what it had already made.
+    const token = credential === 'github' ? await this.options.tokens.mint() : '';
+
     // `mkdtemp` is what makes two tickets unable to share a workspace — the name is chosen by
     // the kernel, not by us, so there is no ticket key to collide on and no clean-up race
     // between a retry and the attempt it is retrying.
     const dir = await mkdtemp(join(this.root, WORKSPACE_PREFIX));
-    const token = credential === 'github' ? await this.options.tokens.mint() : '';
 
     try {
       await this.git(

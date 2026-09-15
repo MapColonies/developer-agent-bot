@@ -100,9 +100,9 @@ interface AgentLimits {
  * A claimed ticket and the clone to work it in — everything the implement step needs and
  * nothing about how either was obtained.
  *
- * The ticket arrives already claimed (MAPCO-11431) and the clone already made (MAPCO-11433);
- * `deliverTicket` (src/deliver.ts) is what does both and then calls this. Neither is this
- * module's business, which is why they come in as values.
+ * The ticket arrives already claimed (MAPCO-11431) and the clone already made (MAPCO-11433):
+ * `handleTicket` (src/cycle.ts) claims it, `DeliveryPort.deliver` (src/deliver.ts) clones and
+ * then calls this. Neither is this module's business, which is why they come in as values.
  */
 interface Assignment {
   readonly ticket: JiraTicket;
