@@ -4,9 +4,13 @@ Pulls `agent-ready` Jira tickets from the MAPCO project, implements them, and op
 requests. Designed in [MAPCO-11374](https://mapcolonies.atlassian.net/browse/MAPCO-11374),
 substrate decided in [MAPCO-11377](https://mapcolonies.atlassian.net/browse/MAPCO-11377).
 
-**Current slice: MAPCO-11431.** It walks the whole Jira state machine with nothing in the
-middle — it claims a ticket and hands it straight back with a comment. It touches no
-repository and writes no code yet.
+**Current slice: MAPCO-11434.** On top of the claim/release cycle (MAPCO-11431) it can now
+hand a claimed ticket to the Claude Agent SDK, let the model change a clone, and run that
+clone's own tests before anyone sees the diff. Nothing is committed, nothing is pushed, and
+no branch is created — that is MAPCO-11436.
+
+The pieces exist but are **not wired into `runCycle` yet**: labelling a ticket `agent-ready`
+today still gets it claimed, commented and handed straight back. See *Known gaps*.
 
 ## Shape
 
@@ -52,6 +56,18 @@ Verified against the live Jira instance in MAPCO-11427, and each one bit a first
   `(<ours>) AND project = MAPCO`, so top-level `OR` is safe.
 - **Transitions are resolved per issue, never cached.** Transition ids are not portable
   across issue types: id `4` starts work on a Tech Requirement and *ends* it on a Task.
+
+- **The chart sets `prometheus.enabled: false`** while almost every other MapColonies chart
+  sets it true. This service has nothing to scrape: it is outbound-only, with no Service, no
+  Route and no container port, and although `containerConfig.ts` builds a prom-client
+  registry nothing ever serves it over HTTP. Left true, `mclabels` stamps
+  `prometheus.io/scrape: "true"` with port 8080 and `/metrics` onto the pod and Prometheus
+  gets a target that can only ever fail. Flip it the day something starts listening.
+- **`mclabels.environment` is the only key that sets the environment label.** A
+  `global.environment` or a top-level `environment` is ignored by the subchart, and leaving
+  all three unset stamps the literal string `undefined` rather than omitting the label. The
+  commented `#environment:` line in `helm/values.yaml` is where a deploy-time values file
+  supplies it.
 
 ## Ticket titles
 
@@ -136,8 +152,58 @@ part-way, the ticket is left held by the bot and `In Progress`, which the query 
 boot-time orphan sweep (MAPCO-11432) recovers. Unassigning first risks leaving a ticket
 unassigned and `In Progress` — which polls straight back in, forever.
 
+## Implementing a ticket
+
+A claimed ticket, a clone, and a bounded number of attempts. Each attempt hands the ticket to
+the model, then runs the clone's own test command; an attempt counts as done only when that
+command exits zero. Running out of attempts is a give-up, which already has a meaning —
+comment, hand back, count the attempt.
+
+### The model's tool surface is the control
+
+`tools` is the SDK's base-set option, so the tools not named there are never built for the
+session: there is no `Bash` to reach for, no subagent to delegate a `git push` to, and no MCP
+server to be handed. `Bash`, `PowerShell`, the worktree tools, `Agent`/`Task`, the network
+tools, `Skill` and `mcp__*` are denied by name as well, because a deny rule outranks every
+other step of the permission evaluation.
+
+`settingSources: []` with `strictMcpConfig` matters more than it looks. The clone is a
+repository off the internet, and with the project source enabled its own
+`.claude/settings.json` would be read as permission rules — letting the thing being worked on
+widen what may be done to it. The cost is that the clone's `CLAUDE.md` is not loaded either,
+which is a real loss of local convention and the right side of the trade.
+
+There is a sentence in the prompt asking the model not to use git. It is documented as *not*
+being the control; it is there so a model that goes looking is told why, and `deniedTools`
+reports it in the run if one does.
+
+### A write counts only when its result comes back
+
+"The tree changed" is read from the `tool_result` that answers each write, paired by id — not
+from the `tool_use` that requested it. Reading the attempt alone was a real bug: an `Edit`
+whose `old_string` did not match, or a `Write` the permission layer refused, reported a
+change, and the worker went on to test an unmodified clone, watch it pass, and certify a
+verified diff that did not exist. A call that was denied, or that the run never got back to,
+has no result at all and counts as no change.
+
+### The test plan is taken before the model runs
+
+The command is inferred from the pristine clone's `package.json` (`test:ci` → `test` →
+`test:unit`, npm's placeholder script rejected) **before** the first hand-off, and every
+attempt is graded against that snapshot — so a model cannot rewrite the command that grades
+it. Install lifecycle scripts are compared before `npm ci` executes them, and a manifest the
+model moved installs with `--ignore-scripts`.
+
 ## Known gaps
 
+- **Nothing is wired into `runCycle`.** `implementTicket` has no caller: `src/cycle.ts` still
+  claims a ticket and hands it straight back. The slice is a library with tests, not a
+  behaviour the deployed worker has. Wiring it needs the clone step (MAPCO-11433) to produce
+  a working directory and `ReleasePort` bound to `handBackTicket`.
+- **`DescriptionPort` has no implementation.** The poll does not fetch a description and
+  `JiraTicket` carries none, so there is no way to hand the model the ticket's prose — every
+  ticket is refused before the first model turn. Closing it is `description` in `POLL_FIELDS`,
+  on `McpTicket`, in `toTicket` and on `JiraTicket`.
 - The worker knobs are read from the environment rather than `@map-colonies/config`, which
   needs a schema published in `@map-colonies/schemas`. Telemetry still goes through the
   library. Registering a real schema is follow-up work.
