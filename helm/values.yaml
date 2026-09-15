@@ -4,7 +4,10 @@ global:
   metrics: {}
 
 mclabels:
-  component: worker
+  # Must be one of the values mclabels' values.schema.json allows:
+  # frontend | backend | database | proxy-server | cache-server | infrastructure.
+  # There is no "worker" member — this outbound-only poller is a backend process.
+  component: backend
   partOf: developer-agent-bot
   owner: common
   prometheus:
@@ -68,17 +71,18 @@ worker:
   pollIntervalMs: 300000
   maxTicketsPerRun: 1
   maxConcurrentTickets: 1
-  # Which account the model calls are billed to. `api-key` reads ANTHROPIC_API_KEY from the
-  # Secret below; `subscription` reads CLAUDE_CODE_OAUTH_TOKEN from it instead.
+  # Which account the model calls are billed to. `sdk` reads CLAUDE_CODE_OAUTH_TOKEN from the
+  # Secret below — a Claude subscription token from `claude setup-token`; `api-key` reads
+  # ANTHROPIC_API_KEY from it instead.
   #
-  # `subscription` bills, and is rate-limited as, the person whose token it is. Anthropic's
-  # Agent SDK documentation states that claude.ai login and its rate limits may not be used
-  # for products built on the Agent SDK unless previously approved — setting this asserts
-  # that this deployment has that approval. The worker and that person's own interactive use
-  # also share one quota, and the pod will crash-loop when the token expires.
-  modelAuth: 'api-key'
-  # Secret holding the model credential. Key name must be `apiKey` for modelAuth: api-key,
-  # or `oauthToken` for modelAuth: subscription. The pod will not start without it.
+  # `sdk` bills, and is rate-limited as, the person whose token it is. Anthropic's Agent SDK
+  # documentation states that claude.ai login and its rate limits may not be used for products
+  # built on the Agent SDK unless previously approved — running in this mode asserts that this
+  # deployment has that approval. The worker and that person's own interactive use also share
+  # one quota, and the pod will crash-loop when the token expires.
+  modelAuth: 'sdk'
+  # Secret holding the model credential. Key name must be `oauthToken` for modelAuth: sdk,
+  # or `apiKey` for modelAuth: api-key. The pod will not start without it.
   modelSecretName: ''
 
 env:

@@ -78,9 +78,9 @@ so refusal is the common path until the convention spreads.
 | `MAX_TICKETS_PER_RUN` | `1` | Tickets one cycle may start |
 | `MAX_CONCURRENT_TICKETS` | `1` | Tickets in flight at once |
 | `GITHUB_TOKEN` | *optional* | Bearer token for repo lookups. A PAT locally; a short-lived App installation token in the cluster once MAPCO-11428 lands. Unauthenticated works at a lower rate limit |
-| `MODEL_AUTH` | `api-key` | Which account model calls are billed to: `api-key` or `subscription`. An unrecognised value refuses to start rather than falling back |
+| `MODEL_AUTH` | `sdk` | Which account model calls are billed to: `sdk` or `api-key`. An unrecognised value refuses to start rather than falling back |
+| `CLAUDE_CODE_OAUTH_TOKEN` | required for `sdk` | A Claude subscription token from `claude setup-token`, from a Secret. Billed to, and rate-limited as, that person — see the warning below |
 | `ANTHROPIC_API_KEY` | required for `api-key` | Anthropic API key, from a Secret. Billed to that Anthropic account |
-| `CLAUDE_CODE_OAUTH_TOKEN` | required for `subscription` | A Claude subscription token from `claude setup-token`. Billed to, and rate-limited as, that person — see the warning below |
 
 Raise `MAX_TICKETS_PER_RUN` before ever raising `MAX_CONCURRENT_TICKETS`.
 
@@ -97,12 +97,12 @@ decision — and the failure is silent, because a run that quietly spends someon
 quota looks exactly like a working one. One mode's credential is never used for the other; the
 worker refuses to start and names the one it found.
 
-> **⚠️ `subscription` needs Anthropic's approval.** Anthropic's Agent SDK documentation states
-> that, unless previously approved, claude.ai login and its rate limits may not be used for
-> products built on the Agent SDK. Setting `MODEL_AUTH=subscription` asserts that this
+> **⚠️ `sdk` needs Anthropic's approval, and is the default.** Anthropic's Agent SDK
+> documentation states that, unless previously approved, claude.ai login and its rate limits
+> may not be used for products built on the Agent SDK. Running this worker asserts that this
 > deployment has that approval — the code cannot check it.
 
-Three consequences of `subscription` mode that no code can fix:
+Three consequences of `sdk` mode that no code can fix:
 
 - **Shared quota.** Rate limits belong to the account, so the worker and that person's own
   interactive Claude Code use starve each other.
@@ -111,7 +111,9 @@ Three consequences of `subscription` mode that no code can fix:
 - **Expiry.** Subscription tokens lapse, and when one does the pod crash-loops rather than
   running on unclear credentials. That is the intended failure, not a bug.
 
-`api-key` mode has none of these, and is the default for that reason.
+`api-key` mode has none of these. It is one `MODEL_AUTH` away if the trade stops being
+worth it — and note the flip side of the default: a deployment carrying only
+`ANTHROPIC_API_KEY` now refuses to start rather than quietly using it.
 
 ## Claiming and releasing
 
@@ -152,7 +154,25 @@ unassigned and `In Progress` — which polls straight back in, forever.
   transition name as a fallback, which covers both shapes, and a `no-transition` refusal
   logs the `offered` names — so the first real run reports the vocabulary rather than
   refusing in silence. Confirm it from that log line before trusting a deployment.
-- `helm lint` needs the private `mclabels` dependency and fails without registry access.
+- **Rendering the chart needs a credential you must supply yourself.** The `mclabels`
+  dependency lives in a private ACR (`oci://acrarolibotnonprod.azurecr.io/helm/infra`) that
+  **rejects anonymous pull** — an unauthenticated `helm dependency build` fails with
+  `401 Unauthorized` from the registry's token endpoint. Once you are logged in, the rest is
+  repeatable:
+
+  ```sh
+  # One-time, per machine. Use your own ACR credential — an AAD login:
+  az acr login --name acrarolibotnonprod
+  # ...or a registry token / service principal, if that is what you were issued:
+  helm registry login acrarolibotnonprod.azurecr.io
+  # Then, from the repo root:
+  helm dependency build helm
+  helm lint helm
+  helm template t helm --set worker.modelSecretName=test-secret
+  ```
+
+  `helm dependency build` writes `helm/charts/mclabels-<version>.tgz`. That is a build
+  artifact: it is covered by the root `.gitignore` `*.tgz` rule and must never be committed.
 
 ## Dry run
 
