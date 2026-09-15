@@ -15,12 +15,13 @@
  * failure is silent — a run that quietly spends someone's personal quota looks exactly like a
  * working one.
  *
- * ## ⚠️ `subscription` mode needs Anthropic's approval
+ * ## ⚠️ `sdk` mode needs Anthropic's approval, and is the default
  *
  * Anthropic's Agent SDK documentation states that, unless previously approved, claude.ai login
  * and its rate limits may not be used for products built on the Agent SDK. This module makes
- * the mode reachable because the operator asked for it; it cannot make it permitted. Whoever
- * sets `MODEL_AUTH=subscription` is asserting that this deployment has that approval.
+ * the mode reachable because the operator asked for it; it cannot make it permitted. Running
+ * this worker at all — since `sdk` is now `DEFAULT_AUTH_MODE` — asserts that this deployment
+ * has that approval.
  *
  * Three operational consequences, none of which code can fix:
  *
@@ -35,22 +36,34 @@
 /** The credential for an organisation's Anthropic account. Billed to that account. */
 const API_KEY_ENV = 'ANTHROPIC_API_KEY';
 
-/** The credential for a person's Claude subscription. Billed to, and rate-limited as, them. */
+/**
+ * The credential for a person's Claude subscription, as `claude setup-token` issues it.
+ * Billed to, and rate-limited as, that person. This is what `sdk` mode reads.
+ */
 const SUBSCRIPTION_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
-/** Selects which of the two the worker authenticates with. Defaults to the org-billed key. */
+/** Selects which of the two the worker authenticates with. Defaults to `sdk`. */
 const AUTH_MODE_ENV = 'MODEL_AUTH';
 
-type ModelAuthMode = 'api-key' | 'subscription';
+type ModelAuthMode = 'api-key' | 'sdk';
 
-const AUTH_MODES: readonly ModelAuthMode[] = ['api-key', 'subscription'];
+const AUTH_MODES: readonly ModelAuthMode[] = ['api-key', 'sdk'];
 
-const DEFAULT_AUTH_MODE: ModelAuthMode = 'api-key';
+/**
+ * The mode a deployment gets when it says nothing.
+ *
+ * `sdk` by operator decision: this worker is meant to run on a Claude subscription, and a
+ * default of `api-key` meant every manifest had to remember to say so. The cost is that the
+ * safe direction is no longer the default — see the warning at the top of this file, and note
+ * that a deployment which sets only `ANTHROPIC_API_KEY` now refuses to start rather than
+ * quietly using it, which is the loud half of the trade.
+ */
+const DEFAULT_AUTH_MODE: ModelAuthMode = 'sdk';
 
 /** Which environment variable each mode reads, and nothing else may be substituted for it. */
 const CREDENTIAL_ENV: Record<ModelAuthMode, string> = {
   'api-key': API_KEY_ENV,
-  subscription: SUBSCRIPTION_ENV,
+  sdk: SUBSCRIPTION_ENV,
 };
 
 /**

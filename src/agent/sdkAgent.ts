@@ -62,7 +62,7 @@ class SdkAgent implements AgentPort {
  * The one place the credential is read, so which account a run bills is a single line someone
  * can check rather than a claim. Which of the two credentials it reads is decided by
  * `MODEL_AUTH` inside `readModelCredential`, never by what happens to be set here — see that
- * module for why inference would be the wrong design, and for the approval `subscription` mode
+ * module for why inference would be the wrong design, and for the approval `sdk` mode
  * requires.
  *
  * Composed at an entry point (src/index.ts, src/dryRun.ts) alongside `new McpJira(...)`, in the

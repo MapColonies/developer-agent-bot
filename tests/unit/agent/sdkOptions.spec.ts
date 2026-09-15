@@ -123,7 +123,7 @@ describe('buildAgentOptions', () => {
     // SDK simply finds no credential where it looked.
     const { env } = buildAgentOptions(request, {
       ...settings,
-      credential: { mode: 'subscription', source: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'oauth-of-a-person' },
+      credential: { mode: 'sdk', source: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'oauth-of-a-person' },
     });
 
     expect(env['CLAUDE_CODE_OAUTH_TOKEN']).toBe('oauth-of-a-person');

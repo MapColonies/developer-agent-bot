@@ -4,10 +4,23 @@ import { AgentConfigError, API_KEY_ENV, AUTH_MODE_ENV, readModelCredential, SUBS
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
 
 describe('readModelCredential', () => {
-  it('should default to the org-billed API key when no mode is configured.', () => {
-    // The default is the safe direction: a deployment that says nothing about billing gets the
-    // account it was provisioned with, not whatever personal token is lying around.
-    expect(readModelCredential({ ANTHROPIC_API_KEY: 'sk-from-the-secret' })).toStrictEqual({
+  it('should default to the subscription token, which is how this worker is meant to run.', () => {
+    expect(readModelCredential({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toStrictEqual({
+      mode: 'sdk',
+      source: SUBSCRIPTION_ENV,
+      value: 'oauth-of-a-person',
+    });
+  });
+
+  it('should refuse a lone API key rather than silently using it, now that sdk is the default.', () => {
+    // The consequence of the default: a deployment or laptop carrying only ANTHROPIC_API_KEY
+    // used to work and now will not start. Refusing loudly is the point — the alternative is
+    // billing an account nobody chose, which reads as success.
+    expect(() => readModelCredential({ ANTHROPIC_API_KEY: 'sk-from-the-secret' })).toThrow(/ANTHROPIC_API_KEY is set/u);
+  });
+
+  it('should take the org-billed key when that mode is asked for.', () => {
+    expect(readModelCredential({ MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: 'sk-from-the-secret' })).toStrictEqual({
       mode: 'api-key',
       source: API_KEY_ENV,
       value: 'sk-from-the-secret',
@@ -15,19 +28,19 @@ describe('readModelCredential', () => {
   });
 
   it('should take the subscription token when that mode is configured.', () => {
-    expect(readModelCredential({ MODEL_AUTH: 'subscription', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toStrictEqual({
-      mode: 'subscription',
+    expect(readModelCredential({ MODEL_AUTH: 'sdk', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toStrictEqual({
+      mode: 'sdk',
       source: SUBSCRIPTION_ENV,
       value: 'oauth-of-a-person',
     });
   });
 
   it('should accept the mode however it was cased in the manifest.', () => {
-    expect(readModelCredential({ MODEL_AUTH: 'Subscription', CLAUDE_CODE_OAUTH_TOKEN: 'oauth' }).mode).toBe('subscription');
+    expect(readModelCredential({ MODEL_AUTH: 'Sdk', CLAUDE_CODE_OAUTH_TOKEN: 'oauth' }).mode).toBe('sdk');
   });
 
   it('should trim, because a Secret mounted from a file usually ends in a newline.', () => {
-    expect(readModelCredential({ ANTHROPIC_API_KEY: 'sk-from-the-secret\n' }).value).toBe('sk-from-the-secret');
+    expect(readModelCredential({ MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: 'sk-from-the-secret\n' }).value).toBe('sk-from-the-secret');
   });
 
   it('should never use one mode’s credential for the other.', () => {
@@ -35,12 +48,15 @@ describe('readModelCredential', () => {
     // property of the pod's environment rather than of a decision, and a run that quietly spent
     // a person's quota would look exactly like a working one.
     expect(() => readModelCredential({ MODEL_AUTH: 'api-key', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toThrow(AgentConfigError);
-    expect(() => readModelCredential({ MODEL_AUTH: 'subscription', ANTHROPIC_API_KEY: 'sk-from-the-secret' })).toThrow(AgentConfigError);
+    expect(() => readModelCredential({ MODEL_AUTH: 'sdk', ANTHROPIC_API_KEY: 'sk-from-the-secret' })).toThrow(AgentConfigError);
   });
 
   it('should point at the credential it found but would not use, because that is the likely mistake.', () => {
-    // Setting the token and forgetting the mode is the mistake an operator actually makes.
-    expect(() => readModelCredential({ CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toThrow(/CLAUDE_CODE_OAUTH_TOKEN is set/u);
+    // Naming the one it saw is the actionable half: a manifest that set a credential and the
+    // wrong mode is far more common than one that set nothing.
+    expect(() => readModelCredential({ MODEL_AUTH: 'api-key', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-of-a-person' })).toThrow(
+      /CLAUDE_CODE_OAUTH_TOKEN is set/u
+    );
   });
 
   it('should refuse an unrecognised mode rather than falling back to the default.', () => {
@@ -53,14 +69,14 @@ describe('readModelCredential', () => {
   });
 
   it('should treat an empty value as unset, which is what a missing Secret key looks like.', () => {
-    expect(() => readModelCredential({ ANTHROPIC_API_KEY: '   ' })).toThrow(AgentConfigError);
-    expect(() => readModelCredential({ MODEL_AUTH: 'subscription', CLAUDE_CODE_OAUTH_TOKEN: '  ' })).toThrow(AgentConfigError);
+    expect(() => readModelCredential({ MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: '   ' })).toThrow(AgentConfigError);
+    expect(() => readModelCredential({ CLAUDE_CODE_OAUTH_TOKEN: '  ' })).toThrow(AgentConfigError);
   });
 
   it('should name the variable the configured mode needs, so the message is actionable.', () => {
-    expect(() => readModelCredential({})).toThrow(API_KEY_ENV);
-    expect(() => readModelCredential({ MODEL_AUTH: 'subscription' })).toThrow(SUBSCRIPTION_ENV);
-    expect(() => readModelCredential({ MODEL_AUTH: 'subscription' })).toThrow(AUTH_MODE_ENV);
+    expect(() => readModelCredential({})).toThrow(SUBSCRIPTION_ENV);
+    expect(() => readModelCredential({ MODEL_AUTH: 'api-key' })).toThrow(API_KEY_ENV);
+    expect(() => readModelCredential({ MODEL_AUTH: 'api-key' })).toThrow(AUTH_MODE_ENV);
   });
 
   it('should be a fault of its own kind, so a bad deployment cannot read as a failed ticket.', () => {
