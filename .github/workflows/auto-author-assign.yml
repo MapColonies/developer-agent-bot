@@ -13,4 +13,5 @@ jobs:
     steps:
       - uses: toshimaru/auto-author-assign@v3.1.0
         with:
-          repo-token: ${{ secrets.GH_PAT }}
+          # Fall back to the built-in token so the job still works if GH_PAT is unset.
+          repo-token: ${{ secrets.GH_PAT || github.token }}

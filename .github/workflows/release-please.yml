@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v5
         with:
-          # this assumes that you have created a personal access token
-          # (PAT) and configured it as a GitHub action secret named
-          # `MY_RELEASE_PLEASE_TOKEN` (this secret name is not important).
-          token: ${{ secrets.GH_PAT }}
+          # Fall back to the built-in token so the job still works if GH_PAT is unset.
+          # Note: with the built-in token the release PR will not run the pull_request
+          # checks, because events created by GITHUB_TOKEN do not trigger workflows.
+          token: ${{ secrets.GH_PAT || github.token }}
