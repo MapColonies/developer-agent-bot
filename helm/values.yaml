@@ -4,14 +4,28 @@ global:
   metrics: {}
 
 mclabels:
+  # Set per environment at deploy time, as in mapproxy-api and the other service charts. Only
+  # `mclabels.environment` feeds the label — `global.environment` and a top-level `environment`
+  # are both ignored by the subchart — and leaving it unset stamps
+  # `mapcolonies.io/environment: undefined` on the pod rather than omitting the label.
+  #environment: development
   # Must be one of the values mclabels' values.schema.json allows:
   # frontend | backend | database | proxy-server | cache-server | infrastructure.
-  # There is no "worker" member — this outbound-only poller is a backend process.
+  # There is no "worker" member — this outbound-only poller is a backend process, which is
+  # what every other MapColonies service chart uses (mapproxy-api, cleaner, exporter-trigger).
   component: backend
   partOf: developer-agent-bot
+  # `gisDomain` is deliberately absent. The raster-owned charts carry it; the common-owned
+  # tooling charts (geojson-viewer) do not, and this is one of those.
   owner: common
   prometheus:
-    enabled: true
+    # False, unlike almost every other chart in the org, because this service has nothing to
+    # scrape. It is outbound-only — no Service, no Route, no container port — and while
+    # `containerConfig.ts` builds a prom-client Registry, nothing ever serves it over HTTP.
+    # Left true, mclabels stamps prometheus.io/scrape=true with port 8080 and /metrics onto
+    # the pod, and Prometheus gets a target that can only ever fail. Flip this the same day
+    # something starts listening, not before.
+    enabled: false
 
 enabled: true
 replicaCount: 1
