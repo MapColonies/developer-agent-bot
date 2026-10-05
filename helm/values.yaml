@@ -4,7 +4,10 @@ global:
   metrics: {}
 
 mclabels:
-  component: worker
+  # Must be one of the values mclabels' values.schema.json allows:
+  # frontend | backend | database | proxy-server | cache-server | infrastructure.
+  # There is no "worker" member — this outbound-only poller is a backend process.
+  component: backend
   partOf: developer-agent-bot
   owner: common
   prometheus:
@@ -93,11 +96,24 @@ worker:
   # Model override. Empty means the worker's own default (agent/sdkOptions.ts).
   model: ''
 
-  # The Anthropic API key. **Required** — the worker refuses to start without it, which is the
-  # loudest thing a missing Secret can be. Never an interactive login: a run that billed a
-  # person's account would look exactly like a working one.
+  # Which account the model calls are billed to. `sdk` reads CLAUDE_CODE_OAUTH_TOKEN — a Claude
+  # subscription token from `claude setup-token`; `api-key` reads ANTHROPIC_API_KEY instead.
+  # Explicit configuration, never inference: the two look alike to the SDK and bill completely
+  # differently, and a worker given the other mode's credential refuses to start rather than
+  # quietly billing an account nobody chose.
+  #
+  # `sdk` bills, and is rate-limited as, the person whose token it is. Anthropic's Agent SDK
+  # documentation states that claude.ai login and its rate limits may not be used for products
+  # built on the Agent SDK unless previously approved — running in this mode asserts that this
+  # deployment has that approval. The worker and that person's own interactive use also share one
+  # quota, and the pod crash-loops when the token expires.
+  modelAuth: 'sdk'
+
+  # The model credential. **Required** — the worker refuses to start without it, which is the
+  # loudest thing a missing Secret can be. The key must hold the credential the mode above asks
+  # for: a subscription token for `sdk`, an API key for `api-key`.
   anthropicSecretName: ''
-  anthropicSecretKey: 'apiKey'
+  anthropicSecretKey: 'oauthToken'
 
   # The GitHub credential, used to look up repos, clone private ones, push and open the pull
   # request. Interim: MAPCO-11428 replaces this with App installation tokens minted per run, so
