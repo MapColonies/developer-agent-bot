@@ -75,6 +75,13 @@ Each one bit a first draft.
   `(<ours>) AND project = MAPCO`, so top-level `OR` is safe.
 - **Transitions are resolved per issue, never cached.** Transition ids are not portable
   across issue types: id `4` starts work on a Tech Requirement and *ends* it on a Task.
+- **A transition is found by its name's second half, not by a target status.** This instance
+  reports no target status at all — `jira_get_transitions` answers with `id` and `name` —
+  and names its transitions `Open to In-Progress`. So the lookup reads the target out of a
+  `<from> to <to>` name, and compares statuses with case, hyphens and whitespace flattened,
+  because `In-Progress` and `In Progress` are the same status. Target status is still tried
+  first and still wins where a server reports one: an entry that says it lands in `Blocked`
+  is not matched for `In Progress` however it is named.
 - **The poll does not fetch descriptions; the per-ticket read does.** A description is long,
   the poll asks for one more ticket than it will work, and prose for a ticket nobody touches
   would be paid for on every tick. So `POLL_FIELDS` omits it and `ISSUE_FIELDS` asks for it —
@@ -238,13 +245,17 @@ not get, skip the run, or make `"test": "echo ok"` the cheapest route to a green
   until it exists, such a ticket stays assigned to the bot. `runCycle` therefore hands a held
   ticket back on an unexpected failure rather than dropping it, but a hand-back that itself
   fails leaves the ticket held.
-- **The real transition vocabulary is unverified.** `jira_get_transitions` and
-  `expand=transitions` are both rejected by the write-pilot MCP server, so the MAPCO
-  workflow's actual transition names and target statuses could not be read the way the poll
-  query was verified in MAPCO-11427. The lookup matches on target status with the
-  transition name as a fallback, which covers both shapes, and a `no-transition` refusal
-  logs the `offered` names — so the first real run reports the vocabulary rather than
-  refusing in silence. Confirm it from that log line before trusting a deployment.
+- **The *release* half of the transition vocabulary is still unverified.** The claim half is
+  now known: `jira_get_transitions` works against the write pilot after all, and on an `Open`
+  ticket it answers with `id` and `name` only — **no target status on any entry** — offering
+  `Canceled`, `Blocked`, `Open to In-Progress`, `Open to Reject`, `Open to Verified`. The
+  lookup reads the target out of that `<from> to <to>` shape, which is what makes a claim
+  work. What nobody has seen yet is the set offered on an `In Progress` ticket, which is what
+  a hand-back needs to get back to `Open` — so the first hand-back is still the thing that
+  reports it, through the `offered` names on a `no-transition` refusal. The consequence of a
+  miss there is worse than a refused claim: `releaseTicket` deliberately keeps hold of a
+  ticket it cannot return to Open, and the orphan sweep that would recover it does not exist
+  yet, so such a ticket stays assigned to the bot.
 - **The Agent SDK on Alpine/musl is unverified.** The production image is
   `node:24-alpine`, and the SDK ships vendored binaries (ripgrep, which backs `Grep`) that are
   usually glibc-linked. A `Grep` that fails is a degraded session rather than a broken one —
