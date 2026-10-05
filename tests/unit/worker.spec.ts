@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentConfigError } from '@src/agent/apiKey';
+import { AgentConfigError } from '@src/agent/credential';
 import { DEFAULT_AGENT_LIMITS } from '@src/agent/implement';
 import type { WorkerConfig } from '@src/common/workerConfig';
 import { TokenError } from '@src/vcs/envToken';
@@ -16,7 +16,7 @@ import { fakeLogger } from '@tests/helpers/fakeLogger';
  */
 
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
-const env: NodeJS.ProcessEnv = { PATH: '/usr/bin', ANTHROPIC_API_KEY: 'sk-from-the-secret', GITHUB_TOKEN: 'ghp_atoken' };
+const env: NodeJS.ProcessEnv = { PATH: '/usr/bin', MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: 'sk-from-the-secret', GITHUB_TOKEN: 'ghp_atoken' };
 /* eslint-enable @typescript-eslint/naming-convention */
 
 const config: WorkerConfig = {
@@ -62,8 +62,10 @@ describe('createWorker', () => {
   it('should refuse to come up when there is no GitHub credential either.', () => {
     // Discovered per ticket instead, this would cost a claim, a comment and an attempt on every
     // ticket in the queue — and two of those retire a ticket from it.
-    /* eslint-disable-next-line @typescript-eslint/naming-convention -- an environment variable name */
-    const withoutToken: NodeJS.ProcessEnv = { ANTHROPIC_API_KEY: 'sk-from-the-secret' };
+    // `MODEL_AUTH` is explicit so the model credential passes and the GitHub one is what is
+    // missing. Left off, `sdk` is the default and this would refuse for the wrong reason.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- environment variable names */
+    const withoutToken: NodeJS.ProcessEnv = { MODEL_AUTH: 'api-key', ANTHROPIC_API_KEY: 'sk-from-the-secret' };
 
     expect(() => createWorker({ jira: new FakeJira(), logger: fakeLogger().logger, config, env: withoutToken })).toThrow(TokenError);
   });

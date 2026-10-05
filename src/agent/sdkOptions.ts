@@ -1,4 +1,5 @@
 import { tail, withoutSecrets } from '../workspace/subprocess';
+import type { ModelCredential } from './credential';
 import { AGENT_GUARDRAILS } from './prompt';
 import { NO_USAGE } from './usage';
 import type { AgentOutcome, AgentRun, AgentRunRequest, TokenUsage } from './types';
@@ -108,14 +109,14 @@ interface AgentQueryOptions {
 
 interface AgentSettings {
   /**
-   * The Anthropic API key, passed in rather than read from here.
+   * The model credential, passed in rather than read from here.
    *
-   * The worker authenticates with a key it was given — from an OpenShift Secret in the
-   * cluster — and never with an interactive login. Handing it in as a value is what makes
-   * that checkable: this module has no other way to authenticate, and the ambient
-   * login credential is stripped out of the child environment below.
+   * Handing it in as a value is what makes the authentication path checkable: this module has
+   * no other way to authenticate, and every credential in the ambient environment — including
+   * the one for the mode *not* in use — is stripped out of the child environment below. So the
+   * model's process sees exactly one credential, the one `readModelCredential` chose.
    */
-  readonly apiKey: string;
+  readonly credential: ModelCredential;
   readonly model?: string;
   /** The environment the model's process derives its own from. Injectable for tests. */
   readonly env?: NodeJS.ProcessEnv;
@@ -142,16 +143,18 @@ function readString(source: Record<string, unknown>, key: string): string {
  *
  * The SDK replaces the child environment wholesale rather than merging, so `process.env` has
  * to be spread in by hand or the child loses `PATH` and `HOME`. That is also the opportunity
- * to take things away: the worker's own credentials go, including the interactive-login token
- * that could otherwise authenticate the run as a person, and the API key goes back in
- * explicitly as the one credential the model's process is meant to have.
+ * to take things away: **every** credential the worker holds is scrubbed first, and exactly one
+ * goes back in — the one whose mode was configured.
+ *
+ * Scrub-then-inject rather than injecting over the top, because the two modes read different
+ * variables. Leaving the unused one in place would mean a pod that has both set could have the
+ * SDK pick the other, which is precisely the silent mis-billing `readModelCredential` refuses
+ * to allow. Scrubbing first makes the choice singular by construction.
  */
 function modelEnv(settings: AgentSettings): Record<string, string | undefined> {
-  return {
-    ...withoutSecrets(settings.env ?? process.env),
-    // eslint-disable-next-line @typescript-eslint/naming-convention -- an environment variable name
-    ANTHROPIC_API_KEY: settings.apiKey,
-  };
+  const scrubbed = withoutSecrets(settings.env ?? process.env);
+
+  return { ...scrubbed, [settings.credential.source]: settings.credential.value };
 }
 
 /** The options one run of the model is given. */

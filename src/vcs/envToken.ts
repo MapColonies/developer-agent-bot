@@ -39,7 +39,7 @@ class TokenError extends Error {
  * The GitHub credential, or a thrown `TokenError`.
  *
  * Called at boot by `createWorker` — where the value is discarded — and again on every mint. The
- * boot call is the important one and it is there for the same reason `readApiKey` is: without a
+ * boot call is the important one and it is there for the same reason `readModelCredential` is: without a
  * credential the worker cannot finish a single ticket, and the failure would otherwise land
  * *per ticket*, as a claim, a clone that refuses, a comment naming an environment variable, and
  * an attempt counted against somebody's ticket. Two of those retire it from the queue. A pod

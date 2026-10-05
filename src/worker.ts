@@ -1,6 +1,6 @@
 import type { Logger } from '@map-colonies/js-logger';
 import { budgetOf, type WorkerConfig } from '@common/workerConfig';
-import { readApiKey } from './agent/apiKey';
+import { readModelCredential } from './agent/credential';
 import { DEFAULT_AGENT_LIMITS } from './agent/implement';
 import { createImplementer } from './agent/implementer';
 import type { AgentLimits } from './agent/types';
@@ -87,11 +87,12 @@ function createWorker(options: WorkerOptions): CycleDeps {
   };
 
   // Both credentials are read here, at boot, and both values are deliberately thrown away —
-  // nothing in this function holds one. The model key is checked first because its refusal is the
-  // more specific ("never an interactive login"), and both are checked at all because the
-  // alternative is discovering a missing Secret *per ticket*: a claim, a comment naming an
-  // environment variable, and an attempt counted against somebody's ticket, twice over.
-  readApiKey(env);
+  // nothing in this function holds one. The model credential is checked first because its refusal
+  // is the more specific one (it names the `MODEL_AUTH` mode and the variable that mode reads),
+  // and both are checked at all because the alternative is discovering a missing Secret *per
+  // ticket*: a claim, a comment naming an environment variable, and an attempt counted against
+  // somebody's ticket, twice over.
+  readModelCredential(env);
   readGitHubToken(env);
 
   const tokens = envTokenProvider(env);
