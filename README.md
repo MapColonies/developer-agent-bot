@@ -114,7 +114,9 @@ rather than after paying for a hand-off whose only honest answer is "there is no
 | `MCP_ATLASSIAN_URL` | *required* | Address of the `atlassian-write` MCP server. Transport is picked from the path: `/sse` gets SSE, anything else Streamable HTTP |
 | `JIRA_BOT_ACCOUNT` | *required* | Identifier written to a ticket's assignee field — an email or accountId |
 | `JIRA_BOT_DISPLAY_NAME` | *required* | What `JIRA_BOT_ACCOUNT` reads back as, surname-first. The claim re-read compares against this |
-| `ANTHROPIC_API_KEY` | *required* | The model credential, from a Secret. The worker refuses to start without it, and never falls back to an interactive login |
+| `MODEL_AUTH` | `sdk` | Which account model calls are billed to: `sdk` reads `CLAUDE_CODE_OAUTH_TOKEN`, `api-key` reads `ANTHROPIC_API_KEY`. Stated, never inferred — the worker refuses a credential its mode did not ask for |
+| `CLAUDE_CODE_OAUTH_TOKEN` | *required in `sdk` mode* | A Claude subscription token from `claude setup-token`. Bills, and is rate-limited as, the person whose token it is |
+| `ANTHROPIC_API_KEY` | *required in `api-key` mode* | The organisation's Anthropic key, from a Secret. The worker refuses to start without the credential its mode asks for |
 | `GITHUB_TOKEN` | *required* | Repo lookups, cloning, pushing and opening the pull request. Checked at boot, like the model key: a public repo can be *cloned* without one but cannot be pushed, so a tokenless worker would fail after paying for the model rather than before. A PAT locally; interim until MAPCO-11428 mints App installation tokens per run |
 | `POLL_INTERVAL_MS` | `300000` | How often a cycle runs |
 | `MAX_TICKETS_PER_RUN` | `1` | Tickets one cycle may start |
@@ -136,6 +138,33 @@ gets switched off during an incident and stays off.
 The two bot-identity variables look redundant and are not: Jira takes an *identifier* on
 write and hands back a *display name* on read, and neither is derivable from the other in
 this instance. Set them inconsistently and every claim reads as lost.
+
+### Which account pays for the model
+
+`MODEL_AUTH` is explicit, and deliberately not inferred from whichever credential happens to be
+present. Both credentials look alike to the SDK and bill completely differently, so letting the
+environment decide would make the billed party a property of the pod rather than of a decision —
+and the failure is silent, because a run that quietly spends someone's personal quota looks
+exactly like a working one. One mode's credential is never used for the other; the worker
+refuses to start and names the one it found.
+
+> **⚠️ `sdk` needs Anthropic's approval, and is the default.** Anthropic's Agent SDK
+> documentation states that, unless previously approved, claude.ai login and its rate limits may
+> not be used for products built on the Agent SDK. Running this worker asserts that this
+> deployment has that approval — the code cannot check it.
+
+Three consequences of `sdk` mode that no code can fix:
+
+- **Shared quota.** Rate limits belong to the account, so the worker and that person's own
+  interactive Claude Code use starve each other.
+- **Attribution.** Runs are that person's, not the worker's — the same problem this README
+  already records for the shared Jira service account, now for the model too.
+- **Expiry.** Subscription tokens lapse, and when one does the pod crash-loops rather than
+  running on unclear credentials. That is the intended failure, not a bug.
+
+`api-key` mode has none of these. It is one `MODEL_AUTH` away if the trade stops being worth it
+— and note the flip side of the default: a deployment carrying only `ANTHROPIC_API_KEY` refuses
+to start rather than quietly using it.
 
 ## Claiming and releasing
 
@@ -220,11 +249,25 @@ not get, skip the run, or make `"test": "echo ok"` the cheapest route to a green
   `node:24-alpine`, and the SDK ships vendored binaries (ripgrep, which backs `Grep`) that are
   usually glibc-linked. A `Grep` that fails is a degraded session rather than a broken one —
   the model still has `Glob` and `Read` — but it is worth checking in the first pod logs.
-- `helm lint` needs the private `mclabels` dependency (`az acr login --name acrarolibotnonprod`,
-  then `helm dependency build helm`) and fails without registry access. It also fails on
-  `mclabels.component: worker`, which is not a member of the subchart's enum; the fix lives in
-  the auth-modes branch rather than here, so lint this chart with
-  `--set mclabels.component=backend` until that lands.
+- **Rendering the chart needs a credential you must supply yourself.** The `mclabels`
+  dependency lives in a private ACR (`oci://acrarolibotnonprod.azurecr.io/helm/infra`) that
+  **rejects anonymous pull** — an unauthenticated `helm dependency build` fails with
+  `401 Unauthorized` from the registry's token endpoint. Once you are logged in, the rest is
+  repeatable:
+
+  ```sh
+  # One-time, per machine. Use your own ACR credential — an AAD login:
+  az acr login --name acrarolibotnonprod
+  # ...or a registry token / service principal, if that is what you were issued:
+  helm registry login acrarolibotnonprod.azurecr.io
+  # Then, from the repo root:
+  helm dependency build helm
+  helm lint helm
+  helm template t helm --set worker.anthropicSecretName=test-secret
+  ```
+
+  `helm dependency build` writes `helm/charts/mclabels-<version>.tgz`. That is a build
+  artifact: it is covered by the root `.gitignore` `*.tgz` rule and must never be committed.
 
 ## Dry run
 
@@ -241,7 +284,7 @@ is per process a dry run gets its own allowance — so set them low for a first 
 MCP_ATLASSIAN_URL="https://atlassian-mcp-write.mapcolonies.net/sse" \
   JIRA_BOT_ACCOUNT="developer-agent@mapcolonies.net" \
   JIRA_BOT_DISPLAY_NAME="AGENT DEVELOPER" \
-  ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  MODEL_AUTH=sdk CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" \
   GITHUB_TOKEN="$(gh auth token)" \
   MAX_TOKENS_PER_TICKET=50000 MAX_TURNS_PER_TICKET=15 MAX_TICKETS_PER_DAY=1 \
   npm run dry-run
