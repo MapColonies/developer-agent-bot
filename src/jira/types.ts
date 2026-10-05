@@ -5,6 +5,19 @@ export interface JiraTicket {
   readonly status: string;
   readonly labels: readonly string[];
   readonly assignee: string | null;
+  /**
+   * The ticket's prose, when it was read.
+   *
+   * Optional because it is deliberately absent from the poll. Descriptions are long, the poll
+   * asks for one more ticket than it will work (the server's `total` is always -1), and prose
+   * the worker never uses is not worth carrying — so `POLL_FIELDS` does not ask for one and a
+   * ticket off `search` never has one. It arrives on the per-ticket read instead, which is what
+   * `DescriptionPort` (src/agent/types.ts) is for; see `ISSUE_FIELDS` in mcpJira.ts.
+   *
+   * Absent and empty are therefore different facts and must not be conflated: absent means
+   * nobody asked, empty means the ticket has nothing on it. Only the second is a refusal.
+   */
+  readonly description?: string;
 }
 
 export interface JiraTransition {

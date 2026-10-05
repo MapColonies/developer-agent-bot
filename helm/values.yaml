@@ -4,7 +4,10 @@ global:
   metrics: {}
 
 mclabels:
-  component: worker
+  # Must be one of the values mclabels' values.schema.json allows:
+  # frontend | backend | database | proxy-server | cache-server | infrastructure.
+  # There is no "worker" member — this outbound-only poller is a backend process.
+  component: backend
   partOf: developer-agent-bot
   owner: common
   prometheus:
@@ -69,6 +72,55 @@ worker:
   maxTicketsPerRun: 1
   maxConcurrentTickets: 1
 
+  # Where the per-ticket clones are made. A writable emptyDir, because the worker now clones a
+  # repository and runs its `npm ci` and its suite, and nothing on disk outlives a ticket.
+  workspaceRoot: '/workspace'
+  # Room for one clone plus its node_modules, times maxConcurrentTickets, with headroom. A
+  # MapColonies service's node_modules is comfortably over 1Gi.
+  workspaceSizeLimit: 8Gi
+
+  # Spend ceilings (MAPCO-11435). Conservative on purpose: a metered API key has no ceiling of
+  # its own, so these are the only thing between a stuck agent and an invoice. There is
+  # deliberately no value meaning "unlimited" — a ceiling that can be switched off gets switched
+  # off during an incident and stays off.
+  maxTokensPerTicket: 200000
+  maxTurnsPerTicket: 40
+  maxTicketsPerDay: 5
+
+  # Who the worker's commits are authored by. The real answer belongs to the GitHub App
+  # (MAPCO-11428): `{app-slug}[bot]` and `{app-id}+{app-slug}[bot]@users.noreply.github.com`.
+  # Until then this is a valid noreply address that is recognisably not a person's.
+  gitName: 'mapcolonies-developer-agent[bot]'
+  gitEmail: 'mapcolonies-developer-agent[bot]@users.noreply.github.com'
+
+  # Model override. Empty means the worker's own default (agent/sdkOptions.ts).
+  model: ''
+
+  # Which account the model calls are billed to. `sdk` reads CLAUDE_CODE_OAUTH_TOKEN — a Claude
+  # subscription token from `claude setup-token`; `api-key` reads ANTHROPIC_API_KEY instead.
+  # Explicit configuration, never inference: the two look alike to the SDK and bill completely
+  # differently, and a worker given the other mode's credential refuses to start rather than
+  # quietly billing an account nobody chose.
+  #
+  # `sdk` bills, and is rate-limited as, the person whose token it is. Anthropic's Agent SDK
+  # documentation states that claude.ai login and its rate limits may not be used for products
+  # built on the Agent SDK unless previously approved — running in this mode asserts that this
+  # deployment has that approval. The worker and that person's own interactive use also share one
+  # quota, and the pod crash-loops when the token expires.
+  modelAuth: 'sdk'
+
+  # The model credential. **Required** — the worker refuses to start without it, which is the
+  # loudest thing a missing Secret can be. The key must hold the credential the mode above asks
+  # for: a subscription token for `sdk`, an API key for `api-key`.
+  anthropicSecretName: ''
+  anthropicSecretKey: 'oauthToken'
+
+  # The GitHub credential, used to look up repos, clone private ones, push and open the pull
+  # request. Interim: MAPCO-11428 replaces this with App installation tokens minted per run, so
+  # that there is no long-lived secret here at all.
+  githubSecretName: ''
+  githubSecretKey: 'token'
+
 env:
   logLevel: info
   logPrettyPrintEnabled: false
@@ -79,13 +131,16 @@ env:
     enabled: false
     url: http://localhost:55681/v1/metrics
 
+# Sized for what the worker actually does now: clone a repository, run its `npm ci` and then its
+# test suite, next to an Agent SDK session. The previous 100m/128Mi was right for a pod that only
+# polled Jira and would OOM-kill on the first `npm ci`.
 resources:
   enabled: true
   value:
     limits:
-      cpu: 100m
-      memory: 128Mi
+      cpu: '2'
+      memory: 4Gi
     requests:
-      cpu: 100m
-      memory: 128Mi
+      cpu: 500m
+      memory: 1Gi
 

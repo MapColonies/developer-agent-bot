@@ -54,6 +54,71 @@ describe('claimTicket', () => {
     await expect(claimTicket(ticket(), jira, bot)).resolves.toEqual({ ok: true });
   });
 
+  it('should claim against the real MAPCO workflow, which names transitions `<from> to <to>`.', async () => {
+    // Verified against the live instance: `jira_get_transitions` answers with `id` and `name`
+    // only — no target status on any entry — and this is the exact vocabulary it returned.
+    // Both earlier strategies miss, and the first real run refused every ticket because of it.
+    const jira = new FakeJira({
+      tickets: [ticket()],
+      transitions: {
+        'MAPCO-1': [
+          { id: '7', name: 'Canceled' },
+          { id: '8', name: 'Blocked' },
+          { id: '3', name: 'Open to In-Progress' },
+          { id: '13', name: 'Open to Reject' },
+          { id: '18', name: 'Open to Verified' },
+        ],
+      },
+      displayNames,
+    });
+
+    await expect(claimTicket(ticket(), jira, bot)).resolves.toEqual({ ok: true });
+    expect(jira.writes).toContainEqual({ kind: 'transition', key: 'MAPCO-1', transitionId: '3' });
+  });
+
+  it('should treat the hyphen in `In-Progress` as the same status as `In Progress`.', async () => {
+    // The difference nobody intends to be meaningful. A byte comparison refuses the ticket.
+    const jira = new FakeJira({ tickets: [ticket()], transitions: { 'MAPCO-1': [{ id: '5', name: 'In-Progress' }] }, displayNames });
+
+    await expect(claimTicket(ticket(), jira, bot)).resolves.toEqual({ ok: true });
+  });
+
+  it('should not read a `<from> to <to>` name as landing in its *from* status.', async () => {
+    // `Open to Reject` lands in Reject. Matching it for a claim would move the ticket to a
+    // status nobody asked for — worse than refusing, because it writes.
+    const jira = new FakeJira({
+      tickets: [ticket()],
+      transitions: {
+        'MAPCO-1': [
+          { id: '13', name: 'Open to Reject' },
+          { id: '18', name: 'Open to Verified' },
+        ],
+      },
+      displayNames,
+    });
+
+    const outcome = await claimTicket(ticket(), jira, bot);
+
+    expect(outcome).toEqual({ ok: false, reason: 'no-transition', offered: ['Open to Reject', 'Open to Verified'] });
+    expect(jira.writes).toEqual([]);
+  });
+
+  it('should prefer a reported target status over a name that merely looks right.', async () => {
+    // The one strategy that cannot be fooled stays first: `Open to In-Progress` reports that it
+    // actually lands in Blocked, so the honest answer is to refuse rather than trust the name.
+    const jira = new FakeJira({
+      tickets: [ticket()],
+      transitions: { 'MAPCO-1': [{ id: '3', name: 'Open to In-Progress', to: 'Blocked' }] },
+      displayNames,
+    });
+
+    await expect(claimTicket(ticket(), jira, bot)).resolves.toEqual({
+      ok: false,
+      reason: 'no-transition',
+      offered: ['Open to In-Progress'],
+    });
+  });
+
   it('should never pick up a ticket someone already holds, and write nothing at all.', async () => {
     const held = ticket({ assignee: 'BROCHSTEIN RAZ' });
     const jira = new FakeJira({ tickets: [held], transitions: workflow, displayNames });

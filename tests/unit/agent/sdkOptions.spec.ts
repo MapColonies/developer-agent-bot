@@ -12,7 +12,7 @@ const request: AgentRunRequest = {
 
 /* eslint-disable @typescript-eslint/naming-convention -- environment variable names */
 const settings: AgentSettings = {
-  apiKey: 'sk-from-the-secret',
+  credential: { mode: 'api-key', source: 'ANTHROPIC_API_KEY', value: 'sk-from-the-secret' },
   env: {
     PATH: '/usr/bin',
     HOME: '/home/node',
@@ -64,6 +64,7 @@ function result(overrides: Record<string, unknown> = {}): unknown {
     is_error: false,
     result: 'Added a retry to the fetch helper.',
     modelUsage: { 'claude-opus-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 7, costUSD: 0.5 } },
+    num_turns: 3,
     permission_denials: [],
     ...overrides,
   };
@@ -118,7 +119,21 @@ describe('buildAgentOptions', () => {
     expect(buildAgentOptions(request, settings).env['ANTHROPIC_API_KEY']).toBe('sk-from-the-secret');
   });
 
-  it('should not pass the interactive-login credential to the model, so the run cannot authenticate as a person.', () => {
+  it('should inject the subscription token, and only it, when that is the configured mode.', () => {
+    // The two modes read different variables, so injecting the wrong one fails silently — the
+    // SDK simply finds no credential where it looked.
+    const { env } = buildAgentOptions(request, {
+      ...settings,
+      credential: { mode: 'sdk', source: 'CLAUDE_CODE_OAUTH_TOKEN', value: 'oauth-of-a-person' },
+    });
+
+    expect(env['CLAUDE_CODE_OAUTH_TOKEN']).toBe('oauth-of-a-person');
+    expect(env['ANTHROPIC_API_KEY']).toBeUndefined();
+  });
+
+  it('should not pass a login credential to the model when it is authenticating as the worker.', () => {
+    // In api-key mode an ambient login token is scrubbed and never reaches the model, so a run
+    // cannot end up authenticated as whoever last logged in on this machine.
     expect(buildAgentOptions(request, settings).env['CLAUDE_CODE_OAUTH_TOKEN']).toBeUndefined();
   });
 
@@ -260,5 +275,22 @@ describe('foldMessages', () => {
 
   it('should report no usage at all when the run produced no result.', () => {
     expect(foldMessages([]).usage).toStrictEqual({ input: 0, output: 0, cacheRead: 0, costUsd: 0 });
+  });
+
+  it("should report the run's own turn count, because the per-ticket ceiling is counted in turns.", () => {
+    // Not a count of messages and not `1`: `MAX_TURNS_PER_TICKET` is charged from this number,
+    // and a hand-off that reported one turn instead of twelve would raise the ceiling twelvefold.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- the SDK's wire format */
+    expect(foldMessages([...wrote('Edit'), result({ num_turns: 12 })]).turns).toBe(12);
+  });
+
+  it('should report no turns for a run that produced no result.', () => {
+    expect(foldMessages([]).turns).toBe(0);
+  });
+
+  it('should report no turns rather than guessing when the result states none.', () => {
+    // The safe direction: an invented count charges a ticket for turns nobody took.
+    /* eslint-disable-next-line @typescript-eslint/naming-convention -- the SDK's wire format */
+    expect(foldMessages([...wrote('Edit'), result({ num_turns: undefined })]).turns).toBe(0);
   });
 });

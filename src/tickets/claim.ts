@@ -43,15 +43,66 @@ type ClaimOutcome = { readonly ok: true } | Refused;
 type ReleaseOutcome = { readonly ok: true } | Refused;
 
 /**
+ * Compare statuses the way a workflow author would, not the way a byte comparison does.
+ *
+ * MAPCO spells the status `In Progress` and the transition into it `Open to In-Progress`. The
+ * hyphen is the kind of difference nobody intends to be meaningful, so case, hyphens,
+ * underscores and runs of whitespace are all flattened before comparing.
+ */
+function normalise(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[\s_-]+/gu, ' ')
+    .trim();
+}
+
+/**
+ * The target half of a transition named `<from> to <to>`, if it has that shape.
+ *
+ * Non-greedy on the left so `Open to In-Progress` yields `In-Progress` rather than matching at
+ * the last `to`, which would matter for a name like `Ready to Deploy to Production`.
+ */
+function targetInName(name: string): string | undefined {
+  return /^.+?\s+to\s+(?<target>.+)$/u.exec(name)?.groups?.['target'];
+}
+
+/**
  * Find the transition that lands a ticket in `status`.
  *
- * Target status first, transition name second. Jira transition names are verbs on a real
- * workflow — `Start Progress`, not `In Progress` — so matching on the name alone would find
- * nothing and refuse every ticket. The name is kept only as a fallback for a server that
- * reports no target status.
+ * Three strategies, narrowest first, because each is right for a different server and only the
+ * first is right in general:
+ *
+ * 1. **Target status**, when the server reports one. The only strategy that cannot be fooled.
+ * 2. **The transition's own name**, for a workflow whose transitions are named after where they
+ *    land.
+ * 3. **The target half of a `<from> to <to>` name.** Verified against the live MAPCO workflow,
+ *    which reports no target status at all — `jira_get_transitions` answers with `id` and `name`
+ *    and nothing else — and names its transitions `Open to In-Progress`, `Open to Verified`,
+ *    `Open to Reject`. Without this the first two both miss and every ticket is refused with
+ *    `no-transition`, which is exactly what the first real run did.
+ *
+ * Order matters. A transition named plainly `Open` must win over `Back to Open` if a workflow
+ * somehow offers both, and strategy 3 must never outrank an exact name.
  */
 function findTransition(transitions: readonly JiraTransition[], status: string): JiraTransition | undefined {
-  return transitions.find((candidate) => candidate.to === status) ?? transitions.find((candidate) => candidate.name === status);
+  const wanted = normalise(status);
+
+  // Split first, because a reported target is authoritative *for that entry*: a transition
+  // that says it lands in Blocked does not land in In Progress however it is named, and
+  // letting a name-based guess override it would move a ticket somewhere nobody asked for.
+  // The name is consulted only where there is nothing better to go on.
+  const reported = transitions.filter((candidate): candidate is JiraTransition & { to: string } => candidate.to !== undefined);
+  const unreported = transitions.filter((candidate) => candidate.to === undefined);
+
+  return (
+    reported.find((candidate) => normalise(candidate.to) === wanted) ??
+    unreported.find((candidate) => normalise(candidate.name) === wanted) ??
+    unreported.find((candidate) => {
+      const target = targetInName(candidate.name);
+
+      return target !== undefined && normalise(target) === wanted;
+    })
+  );
 }
 
 function refuseNoTransition(transitions: readonly JiraTransition[]): Refused {

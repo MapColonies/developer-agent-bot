@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { readApiKey } from './apiKey';
+import { readModelCredential } from './credential';
 import { buildTaskPrompt } from './prompt';
 import { buildAgentOptions, foldMessages, type AgentQueryOptions, type AgentSettings } from './sdkOptions';
 import type { AgentPort, AgentRun, AgentRunRequest } from './types';
@@ -31,12 +31,11 @@ class SdkAgent implements AgentPort {
     /** Injectable so the options-to-SDK seam is testable without the network. */
     private readonly runQuery: RunQuery = query
   ) {
-    if (settings.apiKey.trim() === '') {
-      // Failing here rather than at the first ticket. An empty key means the deployment's
-      // Secret did not arrive, and the worker discovering that mid-cycle would burn a claim.
-      throw new Error(
-        'an Anthropic API key is required — the worker authenticates with a key from its deployment Secret, never an interactive login'
-      );
+    if (settings.credential.value.trim() === '') {
+      // Failing here rather than at the first ticket. An empty credential means the
+      // deployment's Secret did not arrive, and the worker discovering that mid-cycle would
+      // burn a claim.
+      throw new Error(`a model credential is required — ${settings.credential.source} was empty, and the worker has no other way to reach the model`);
     }
   }
 
@@ -60,18 +59,20 @@ class SdkAgent implements AgentPort {
 /**
  * An agent wired to the environment the pod was given.
  *
- * The one place the credential is read, so "the worker authenticates with a key from a Secret"
- * is a single line someone can check rather than a claim. There is no interactive-login path
- * for this to fall back to — `readApiKey` refuses to take one — and no branch here that could
- * grow one later.
+ * The one place the credential is read, so which account a run bills is a single line someone
+ * can check rather than a claim. Which of the two credentials it reads is decided by
+ * `MODEL_AUTH` inside `readModelCredential`, never by what happens to be set here — see that
+ * module for why inference would be the wrong design, and for the approval `sdk` mode
+ * requires.
  *
- * Composed at an entry point (src/index.ts, src/dryRun.ts) alongside `new McpJira(...)`, in the
- * same style as every other collaborator in the worker path: plain construction, no container.
- * That wiring is not part of this slice — the entry points also need the clone from MAPCO-11433
- * and the release path from MAPCO-11431 before there is anything to hand this.
+ * Composed once at boot by `createImplementer`, which `createWorker` (src/worker.ts) calls
+ * alongside `new McpJira(...)` — plain construction, no container, in the same style as every
+ * other collaborator in the worker path. Once per process and not once per ticket, because this
+ * is where the credential is read: a worker with no key must fail to come up rather than claim a
+ * ticket and discover it.
  */
 function createSdkAgent(env: NodeJS.ProcessEnv = process.env, model?: string): SdkAgent {
-  return new SdkAgent({ apiKey: readApiKey(env), model, env });
+  return new SdkAgent({ credential: readModelCredential(env), model, env });
 }
 
 export { createSdkAgent, SdkAgent };

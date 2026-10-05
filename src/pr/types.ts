@@ -3,10 +3,14 @@ import type { Repo } from '../github/types';
 /**
  * One thing the verify slice ran in the checkout before any of this was allowed to happen.
  *
- * Declared here rather than imported because the verify slice (MAPCO-11434) does not exist
- * yet: this is the narrowest shape a pull-request body needs in order to say what was checked,
- * and it is the caller's job to fill it in honestly. `passed: false` is representable on
- * purpose — a body that can only describe success is a body that will eventually lie.
+ * Declared here rather than imported from the verify slice: this is the narrowest shape a
+ * pull-request body needs in order to say what was checked, and it is the caller's job to fill it
+ * in honestly. `passed: false` is representable on purpose — a body that can only describe
+ * success is a body that will eventually lie.
+ *
+ * `verifiedBy` (src/deliver.ts) is what fills it in, from the command `implementTicket` reports
+ * having passed — which is the command read off the clone *before* the model touched it, not
+ * whatever the manifest says afterwards.
  */
 interface VerifiedCheck {
   /** Exactly what was run, as a reviewer would run it themselves. */

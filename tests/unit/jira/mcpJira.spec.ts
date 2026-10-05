@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/naming-convention -- these mirror the MCP server's wire format */
 import { describe, expect, it } from 'vitest';
-import { assigneeFields, labelsFields, toTicket, toTransition } from '@src/jira/mcpJira';
+import { assigneeFields, ISSUE_FIELDS, labelsFields, POLL_FIELDS, toTicket, toTransition } from '@src/jira/mcpJira';
 
 describe('toTicket', () => {
   it('should read an unassigned ticket as unclaimed, not as assigned to someone called Unassigned.', () => {
@@ -42,6 +42,36 @@ describe('toTicket', () => {
       labels: ['agent-ready'],
       assignee: null,
     });
+  });
+
+  it('should leave the description absent when nobody asked for one.', () => {
+    // A ticket off the poll is never asked about its description, and an absent field must not
+    // read as "this ticket has no description" — that is the refusal `implementTicket` makes
+    // before spending anything, and it would then fire on every ticket in the queue.
+    expect(toTicket({ key: 'MAPCO-1', summary: 'a: b' })).not.toHaveProperty('description');
+  });
+
+  it("should keep the ticket's prose when the read asked for it.", () => {
+    expect(toTicket({ key: 'MAPCO-1', description: 'Make the retry actually retry.' }).description).toBe('Make the retry actually retry.');
+  });
+
+  it('should keep an explicitly empty description, which is a ticket with nothing on it.', () => {
+    expect(toTicket({ key: 'MAPCO-1', description: '' }).description).toBe('');
+  });
+});
+
+describe('the field lists', () => {
+  it('should keep the description out of the poll and in the per-issue read.', () => {
+    // The poll asks for one more ticket than it will work and drops the rest, so prose in
+    // `POLL_FIELDS` is paid for on every tick for tickets nobody touches.
+    expect(POLL_FIELDS).not.toContain('description');
+    expect(ISSUE_FIELDS).toContain('description');
+  });
+
+  it('should ask a per-issue read for everything the poll asks for as well.', () => {
+    // `getIssue` is also the claim's confirmation read, so it still has to answer the fields the
+    // claim compares — narrowing it to just the description would break the optimistic claim.
+    expect(ISSUE_FIELDS.split(',')).toEqual(expect.arrayContaining(POLL_FIELDS.split(',')));
   });
 });
 

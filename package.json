@@ -22,7 +22,9 @@
     "assets:copy": "copyfiles -f ./config/* ./dist/config && copyfiles ./package.json dist",
     "clean": "rimraf dist",
     "prepare": "node .husky/install.mjs",
-    "dry-run": "tsx src/dryRun.ts"
+    "dry-run": "tsx src/dryRun.ts",
+    "dry-run:local": "tsx --env-file=.env src/dryRun.ts",
+    "preflight": "tsx --env-file=.env src/preflight.ts"
   },
   "directories": {
     "test": "tests"

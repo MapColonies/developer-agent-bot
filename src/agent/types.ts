@@ -54,6 +54,17 @@ interface AgentRunRequest {
 interface AgentRun {
   readonly outcome: AgentOutcome;
   readonly usage: TokenUsage;
+  /**
+   * Model turns this run took — one request and its response each.
+   *
+   * Reported separately from `TokenUsage` because it is not a bill, it is the other half of the
+   * per-ticket ceiling: `MAX_TURNS_PER_TICKET` is counted in turns, and the only thing that
+   * knows how many a hand-off took is the run itself. A caller that charged `1` per hand-off
+   * instead would turn a ceiling of forty turns into forty hand-offs of forty turns apiece —
+   * see `TicketLedger.charge` (src/budget/types.ts), which is why this is a number and not a
+   * boolean anybody has to guess at.
+   */
+  readonly turns: number;
   /** What the model said it did, or why it stopped. Goes in the log and the give-up comment. */
   readonly summary: string;
   /**
@@ -89,8 +100,9 @@ interface AgentLimits {
  * A claimed ticket and the clone to work it in — everything the implement step needs and
  * nothing about how either was obtained.
  *
- * The ticket arrives already claimed (MAPCO-11431) and the clone already made and classified
- * (MAPCO-11433). Neither is this module's business, which is why they come in as values.
+ * The ticket arrives already claimed (MAPCO-11431) and the clone already made (MAPCO-11433):
+ * `handleTicket` (src/cycle.ts) claims it, `DeliveryPort.deliver` (src/deliver.ts) clones and
+ * then calls this. Neither is this module's business, which is why they come in as values.
  */
 interface Assignment {
   readonly ticket: JiraTicket;
@@ -100,21 +112,22 @@ interface Assignment {
 /**
  * The ticket's prose, read one claimed ticket at a time.
  *
- * A port rather than a field on `Assignment` because there is nothing to pass yet and a field
- * would have hidden that: `JiraTicket` (src/jira/types.ts) carries no description, the poll's
- * `fields` list does not ask for one, and `JiraPort` has no call that returns one — so the only
- * value a caller could have supplied was `''`, on every ticket, for ever. As an interface it is
- * a thing someone has to implement instead of a default someone can accept by accident.
+ * A port rather than a field on `Assignment`, and that shape earned itself. When this slice
+ * landed there was nothing to pass: `JiraTicket` carried no description, the poll's `fields` list
+ * did not ask for one, and `JiraPort` had no call that returned one — so the only value a caller
+ * could have supplied was `''`, on every ticket, for ever. As an interface it was a thing
+ * somebody had to implement rather than a default they could accept by accident, and until
+ * somebody did, every `agent-ready` ticket was claimed, refused as `no-description` and handed
+ * back. `implementTicket` answers an empty description **before the first model turn** rather
+ * than paying for a hand-off whose answer it already knows.
  *
- * Implementing it is three lines in files this slice does not own (MAPCO-11431's): a
- * `description` field on `JiraTicket`, `description` in `POLL_FIELDS`, and one mapping line in
- * `toTicket` (src/jira/mcpJira.ts) — the MCP server's `jira_get_issue` already returns it. Until
- * then the honest implementation is one that returns `''`, and `implementTicket` answers that by
- * handing the ticket back **before** the first model turn rather than paying for a hand-off it
- * knows the answer to.
+ * It is implemented now, by `createDescriptionReader` (src/jira/description.ts), over
+ * `JiraPort.getIssue` and its own field list (`ISSUE_FIELDS` in src/jira/mcpJira.ts).
  *
  * Read per ticket rather than at poll time on purpose: descriptions are long, the poll asks for
- * one more ticket than it will work, and prose the worker never uses is not worth carrying.
+ * one more ticket than it will work, and prose the worker never uses is not worth carrying —
+ * which is why `POLL_FIELDS` still does not ask for one, and why an *absent* description on a
+ * `JiraTicket` is a different fact from an empty one.
  */
 interface DescriptionPort {
   read: (ticket: JiraTicket) => Promise<string>;

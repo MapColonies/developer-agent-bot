@@ -50,14 +50,18 @@ spec:
           imagePullPolicy: {{ .pullPolicy | default "IfNotPresent" }}
           {{- end }}
           {{- if .Values.command }}
-          command: 
+          command:
           {{- toYaml .Values.command | nindent 12 }}
           {{- if .Values.args }}
-          args: 
+          args:
           {{- toYaml .Values.args | nindent 12 }}
           {{- end }}
           {{- end }}
           volumeMounts:
+            # The per-ticket clones. Writable because the worker clones a repository and runs its
+            # own `npm ci` and test suite in here; nothing in it outlives a ticket.
+            - mountPath: {{ .Values.worker.workspaceRoot | quote }}
+              name: workspace
             {{- if .Values.caSecretName }}
             - mountPath: {{ printf "%s/%s" .Values.caPath .Values.caKey | quote }}
               name: root-ca
@@ -83,6 +87,46 @@ spec:
               value: {{ .Values.worker.maxTicketsPerRun | quote }}
             - name: MAX_CONCURRENT_TICKETS
               value: {{ .Values.worker.maxConcurrentTickets | quote }}
+            - name: WORKSPACE_ROOT
+              value: {{ .Values.worker.workspaceRoot | quote }}
+            - name: MAX_TOKENS_PER_TICKET
+              value: {{ .Values.worker.maxTokensPerTicket | quote }}
+            - name: MAX_TURNS_PER_TICKET
+              value: {{ .Values.worker.maxTurnsPerTicket | quote }}
+            - name: MAX_TICKETS_PER_DAY
+              value: {{ .Values.worker.maxTicketsPerDay | quote }}
+            - name: AGENT_GIT_NAME
+              value: {{ .Values.worker.gitName | quote }}
+            - name: AGENT_GIT_EMAIL
+              value: {{ .Values.worker.gitEmail | quote }}
+            {{- if .Values.worker.model }}
+            - name: AGENT_MODEL
+              value: {{ .Values.worker.model | quote }}
+            {{- end }}
+            # Which account the model calls are billed to, stated rather than inferred. The
+            # worker refuses to start on a credential its mode did not ask for, so this value
+            # and the Secret's key below have to agree.
+            - name: MODEL_AUTH
+              value: {{ .Values.worker.modelAuth | quote }}
+            {{- if .Values.worker.anthropicSecretName }}
+            # The one credential the worker talks to the model with. Required: it refuses to
+            # start without it rather than claiming a ticket and finding out — see
+            # readModelCredential. The variable name is the mode's, never both at once.
+            - name: {{ if eq .Values.worker.modelAuth "sdk" }}CLAUDE_CODE_OAUTH_TOKEN{{ else }}ANTHROPIC_API_KEY{{ end }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.anthropicSecretName | quote }}
+                  key: {{ .Values.worker.anthropicSecretKey | quote }}
+            {{- end }}
+            {{- if .Values.worker.githubSecretName }}
+            # Repo lookups, the clone, the push and the pull request. MAPCO-11428 replaces this
+            # with an App installation token minted per run.
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.worker.githubSecretName | quote }}
+                  key: {{ .Values.worker.githubSecretKey | quote }}
+            {{- end }}
             {{- if .Values.caSecretName }}
             - name: REQUESTS_CA_BUNDLE
               value: {{ printf "%s/%s" .Values.caPath .Values.caKey | quote }}
@@ -91,7 +135,7 @@ spec:
             {{- end }}
             {{- if .Values.extraEnvVars }}
             {{- toYaml .Values.extraEnvVars | nindent 12 }}
-            {{- end }}            
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "developer-agent-bot.fullname" . }}
@@ -103,6 +147,9 @@ spec:
         {{ tpl (toYaml .Values.sidecars) . | nindent 8 }}
         {{- end }}
       volumes:
+        - name: workspace
+          emptyDir:
+            sizeLimit: {{ .Values.worker.workspaceSizeLimit | quote }}
         {{- if .Values.caSecretName }}
         - name: root-ca
           secret:
@@ -110,5 +157,5 @@ spec:
         {{- end }}
         {{- if .Values.extraVolumes -}}
           {{ tpl (toYaml .Values.extraVolumes) . | nindent 8 }}
-        {{- end }}    
+        {{- end }}
 {{- end -}}

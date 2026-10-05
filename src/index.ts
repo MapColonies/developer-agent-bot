@@ -7,6 +7,7 @@ import { getTracing } from '@common/tracing';
 import { registerExternalValues } from './containerConfig';
 import { McpJira } from './jira/mcpJira';
 import { createScheduler } from './scheduler';
+import { createWorker } from './worker';
 
 async function main(): Promise<void> {
   const container = await registerExternalValues();
@@ -14,7 +15,11 @@ async function main(): Promise<void> {
   const config = loadWorkerConfig();
 
   const jira = new McpJira(config.mcpUrl);
-  const scheduler = createScheduler({ jira, logger, config }, config.pollIntervalMs, logger);
+  // Everything the worker needs, built once — including the model credential, so a pod with no
+  // Secret fails to come up rather than claiming a ticket and discovering it. See `createWorker`
+  // for which of these lifetimes are load-bearing.
+  const worker = createWorker({ jira, logger, config });
+  const scheduler = createScheduler(worker, config.pollIntervalMs, logger);
 
   const shutdown = (signal: string): void => {
     logger.info({ msg: 'shutting down', signal });
