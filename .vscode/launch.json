@@ -5,6 +5,46 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // One real cycle, stepped through. This is the whole pipeline: it claims a real
+      // `agent-ready` ticket, clones the repo its title names, hands it to the model, runs that
+      // repo's suite, and on a pass pushes an `agent/` branch and opens a real pull request.
+      //
+      // Needs the corporate VPN — the MCP server is not reachable from outside it — and a
+      // subscription token from `claude setup-token`, exported as CLAUDE_CODE_OAUTH_TOKEN in the
+      // shell VS Code was launched from. The ceilings below are deliberately far under the
+      // defaults: MAX_TICKETS_PER_DAY is counted per process, so this run gets its own allowance.
+      "type": "node",
+      "request": "launch",
+      "name": "Dry run (sdk auth)",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "--inspect-brk"],
+      "program": "${workspaceFolder}/src/dryRun.ts",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "smartStep": true,
+      "skipFiles": ["${workspaceFolder}/node_modules/**/*.js", "<node_internals>/**/*.js"],
+      // Everything the run needs lives in `.env` (gitignored). Copy `.env.example` to
+      // `.env` and fill in the two tokens. Nothing has to be exported into the shell, so
+      // VS Code no longer has to be launched from a particular terminal.
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      // The same seam with every edge faked — no Jira, no GitHub, no model, no money. The place
+      // to find out where the breakpoints want to go before spending a real ticket on it.
+      "type": "node",
+      "request": "launch",
+      "name": "Integration: one cycle (fakes)",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vitest", "run", "--project", "integration", "--no-file-parallelism", "--coverage.enabled=false"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "autoAttachChildProcesses": true,
+      "sourceMaps": true,
+      "smartStep": true,
+      "skipFiles": ["<node_internals>/**/*.js"]
+    },
+    {
       "type": "node",
       "request": "launch",
       "name": "Server",
@@ -27,7 +67,6 @@
         "TELEMETRY_METRICS_ENABLED": "false",
         "TELEMETRY_TRACING_URL": "http://localhost:55681/v1/trace",
         "TELEMETRY_METRICS_URL": "http://localhost:55681/v1/metrics"
-        // "OPENAPI_FILE_PATH": "./openapi3.yaml"
       }
     }
   ]
